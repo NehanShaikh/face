@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Faculty Dashboard</title>
+<style>
+body { font-family: Arial, sans-serif; background: #f3f3f3; padding: 30px; text-align: center; }
+button { padding: 8px 12px; margin: 4px; cursor: pointer; }
+table { margin: 20px auto; border-collapse: collapse; width: 90%; background: #fff; }
+th, td { border: 1px solid #ccc; padding: 8px; }
+th { background: #007bff; color: #fff; }
+</style>
+</head>
+<body>
+<h1>👨‍🏫 Faculty Dashboard</h1>
+<button onclick="logout()">Logout</button>
+
+<h2>📋 Students List</h2>
+<button onclick="addStudent()">➕ Add Student</button>
+<table id="studentsTable">
+<thead>
+<tr>
+<th>ID</th><th>Name</th><th>Roll</th><th>Class</th><th>Email</th><th>Phone</th><th>Actions</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<h2>🗂 Attendance Records</h2>
+<button onclick="addAttendance()">➕ Add Attendance</button>
+<table id="attendanceTable">
+<thead>
+<tr>
+<th>ID</th><th>Student ID</th><th>Name</th><th>Timestamp</th><th>Actions</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<script>
+const token = localStorage.getItem("token");
+if (!token) location.href="pipeline.html";
+
+// ---------- Logout ----------
+function logout(){
+  localStorage.removeItem("token");
+  location.href="pipeline.html";
+}
+
+// ---------- Fetch Students ----------
+async function fetchStudents(){
+  const res = await fetch("http://localhost:3000/faculty/students", {
+    headers: { "Authorization": "Bearer " + token }
+  });
+  const students = await res.json();
+  const tbody = document.querySelector("#studentsTable tbody");
+  tbody.innerHTML = "";
+  students.forEach(s=>{
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${s.student_id}</td>
+      <td>${s.name}</td>
+      <td>${s.roll_number}</td>
+      <td>${s.class}</td>
+      <td>${s.email}</td>
+      <td>${s.phone}</td>
+      <td>
+        <button onclick="editStudent(${s.student_id})">✏️</button>
+        <button onclick="deleteStudent(${s.student_id})">🗑️</button>
+      </td>`;
+    tbody.appendChild(row);
+  });
+}
+
+// ---------- Fetch Attendance ----------
+async function fetchAttendance(){
+  const res = await fetch("http://localhost:3000/faculty/attendance", {
+    headers: { "Authorization": "Bearer " + token }
+  });
+  const records = await res.json();
+  const tbody = document.querySelector("#attendanceTable tbody");
+  tbody.innerHTML = "";
+  records.forEach(r=>{
+    const row = document.createElement("tr");
+    const time = new Date(r.timestamp).toLocaleString();
+    row.innerHTML = `
+      <td>${r.attendance_id}</td>
+      <td>${r.student_id}</td>
+      <td>${r.name}</td>
+      <td>${time}</td>
+      <td>
+        <button onclick="editAttendance(${r.attendance_id},${r.student_id},'${r.timestamp}')">✏️</button>
+        <button onclick="deleteAttendance(${r.attendance_id})">🗑️</button>
+      </td>`;
+    tbody.appendChild(row);
+  });
+}
+
+// ---------- Add Student ----------
+async function addStudent(){
+  const name = prompt("Name"), roll = prompt("Roll Number"), cls = prompt("Class"), email = prompt("Email"), phone = prompt("Phone");
+  if(!name||!roll||!cls) return alert("Name, Roll, Class required!");
+  const res = await fetch("http://localhost:3000/faculty/students",{
+    method:"POST",
+    headers:{ "Authorization": "Bearer "+token, "Content-Type":"application/json" },
+    body:JSON.stringify({name,roll_number:roll,class_name:cls,email,phone})
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchStudents(); }
+  else alert(data.error||data.message);
+}
+
+// ---------- Edit Student ----------
+async function editStudent(id){
+  const name = prompt("New Name"), roll = prompt("New Roll"), cls = prompt("New Class"), email = prompt("Email"), phone = prompt("Phone");
+  if(!name||!roll||!cls) return alert("Name, Roll, Class required!");
+  const res = await fetch(`http://localhost:3000/faculty/students/${id}`,{
+    method:"PUT",
+    headers:{ "Authorization":"Bearer "+token,"Content-Type":"application/json" },
+    body:JSON.stringify({name,roll_number:roll,class_name:cls,email,phone})
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchStudents(); }
+  else alert(data.error);
+}
+
+// ---------- Delete Student ----------
+async function deleteStudent(id){
+  if(!confirm("Delete student?")) return;
+  const res = await fetch(`http://localhost:3000/faculty/students/${id}`,{method:"DELETE", headers:{"Authorization":"Bearer "+token}});
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchStudents(); }
+  else alert(data.error||data.message);
+}
+
+// ---------- Add Attendance ----------
+async function addAttendance(){
+  const sid = prompt("Student ID"), name=prompt("Student Name");
+  if(!sid||!name) return alert("ID and Name required!");
+  const res = await fetch("http://localhost:3000/faculty/attendance",{
+    method:"POST",
+    headers:{ "Authorization":"Bearer "+token,"Content-Type":"application/json" },
+    body:JSON.stringify({student_id:sid,name})
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchAttendance(); }
+  else alert(data.error||data.message);
+}
+
+// ---------- Edit Attendance ----------
+async function editAttendance(id,sid,timestamp){
+  const newSid = prompt("Student ID",sid);
+  const ts = prompt("Timestamp YYYY-MM-DD HH:MM:SS",timestamp);
+  if(!newSid||!ts) return alert("Required!");
+  const res = await fetch(`http://localhost:3000/faculty/attendance/${id}`,{
+    method:"PUT",
+    headers:{ "Authorization":"Bearer "+token,"Content-Type":"application/json" },
+    body:JSON.stringify({student_id:newSid,timestamp:ts})
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchAttendance(); }
+  else alert(data.error);
+}
+
+// ---------- Delete Attendance ----------
+async function deleteAttendance(id){
+  if(!confirm("Delete attendance?")) return;
+  const res = await fetch(`http://localhost:3000/faculty/attendance/${id}`,{method:"DELETE", headers:{"Authorization":"Bearer "+token}});
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchAttendance(); }
+  else alert(data.error||data.message);
+}
+
+// ---------- Initial Load ----------
+fetchStudents();
+fetchAttendance();
+
+</script>
+</body>
+</html>

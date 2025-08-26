@@ -1,78 +1,55 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Face Recognition Pipeline</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f3f3f3;
-            padding: 30px;
-            text-align: center;
-        }
-        input, button {
-            padding: 10px;
-            margin: 10px;
-            font-size: 16px;
-        }
-        button {
-            cursor: pointer;
-        }
-        #log {
-            margin-top: 20px;
-            white-space: pre-wrap;
-            text-align: left;
-            max-width: 800px;
-            margin: auto;
-            background: #fff;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>Login - Face Attendance</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align:center; background:#f5f5f5; padding:50px; }
+    .card { background:white; padding:30px; border-radius:10px; max-width:400px; margin:auto; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    input, button { padding:10px; margin:10px; width:80%; font-size:16px; }
+    button { cursor:pointer; }
+  </style>
 </head>
 <body>
+  <div class="card">
+    <h2>🔐 Login</h2>
+    <input type="text" id="username" placeholder="Username" required><br>
+    <input type="password" id="password" placeholder="Password" required><br>
+    <button onclick="login()">Login</button>
+    <p id="msg"></p>
+  </div>
 
-    <h1>📸 Face Recognition Attendance System</h1>
+  <script>
+    async function login() {
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value.trim();
+      const msg = document.getElementById("msg");
 
-    <input type="text" id="name" placeholder="Enter your name" required />
+      try {
+        const res = await fetch("http://localhost:3000/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
 
-    <br>
+        if (!res.ok) { msg.innerText = data.error; return; }
 
-    <button onclick="runStep('1_capture_images.py')">📸 1. Capture Images</button>
-    <button onclick="runStep('2_crop_faces.py')">✂️ 2. Crop Faces</button>
-    <button onclick="runStep('3_generate_embeddings.py')">🧠 3. Generate Embeddings</button>
-    <button onclick="runStep('insert_embedding.py')">🗄 4. Insert Embeddings</button>
-    <button onclick="runStep('4_face_recognition.py')">✅ 5. Run Face Recognition</button>
+        // Save token + role
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("role", data.role);
+        localStorage.setItem("username", username);
 
-    <div id="log"></div>
-
-    <script>
-        async function runStep(scriptName) {
-            const name = document.getElementById("name").value.trim();
-            const log = document.getElementById("log");
-
-            if (!name && scriptName !== "4_face_recognition.py") {
-                log.innerText = "⚠️ Please enter your name.";
-                return;
-            }
-
-            log.innerText = `⏳ Running ${scriptName}...`;
-
-            try {
-                const url = scriptName === '4_face_recognition.py'
-                    ? `http://localhost:3000/run/${scriptName}`
-                    : `http://localhost:3000/run/${scriptName}?name=${encodeURIComponent(name)}`;
-
-                const res = await fetch(url);
-                const data = await res.json();
-
-                log.innerText = `✅ ${scriptName} output:\n\n${data.output}`;
-            } catch (err) {
-                log.innerText = `❌ Error running ${scriptName}:\n\n${err}`;
-            }
+        // Redirect
+        if (data.role === "faculty") {
+          window.location.href = "faculty.html";
+        } else {
+          window.location.href = "student.html";
         }
-    </script>
-
+      } catch (err) {
+        msg.innerText = "❌ Error logging in";
+      }
+    }
+  </script>
 </body>
 </html>
