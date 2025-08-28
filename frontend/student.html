@@ -4,46 +4,13 @@
     <meta charset="UTF-8">
     <title>Student Dashboard</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f3f3f3;
-            padding: 30px;
-            text-align: center;
-        }
-        input, button {
-            padding: 10px;
-            margin: 10px;
-            font-size: 16px;
-        }
-        button {
-            cursor: pointer;
-        }
-        table {
-            margin: 20px auto;
-            border-collapse: collapse;
-            width: 80%;
-            background: #fff;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-        th, td {
-            padding: 10px;
-            border: 1px solid #ccc;
-        }
-        th {
-            background-color: #007bff;
-            color: #fff;
-        }
-        #log {
-            margin-top: 20px;
-            white-space: pre-wrap;
-            text-align: left;
-            max-width: 800px;
-            margin: auto;
-            background: #fff;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
+        body { font-family: Arial, sans-serif; background: #f3f3f3; padding: 30px; text-align: center; }
+        input, button { padding: 10px; margin: 10px; font-size: 16px; }
+        button { cursor: pointer; }
+        table { margin: 20px auto; border-collapse: collapse; width: 80%; background: #fff; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        th, td { padding: 10px; border: 1px solid #ccc; }
+        th { background-color: #007bff; color: #fff; }
+        #log { margin-top: 20px; white-space: pre-wrap; text-align: left; max-width: 800px; margin: auto; background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
     </style>
 </head>
 <body>
@@ -51,45 +18,142 @@
 <h1>🎓 Student Dashboard</h1>
 <button onclick="logout()">Logout</button>
 
+<!-- ✅ Button to open the form -->
+<button id="openFormBtn">➕ Register Student</button>
+
+<!-- ✅ Student Registration Form (initially hidden) -->
+<div id="studentFormContainer" style="display:none; margin-top:20px;">
+    <h2>Student Registration</h2>
+    <form id="studentForm">
+        <input type="text" id="sname" placeholder="Name" required><br><br>
+        <input type="text" id="sroll" placeholder="Roll Number" required><br><br>
+        <input type="text" id="sclass" placeholder="Class" required><br><br>
+        <input type="email" id="semail" placeholder="Email" required><br><br>
+        <input type="text" id="sphone" placeholder="Phone" required><br><br>
+        <button type="submit">confirm</button>
+        <button type="button" id="closeFormBtn">Cancel</button>
+    </form>
+    <div id="studentMsg"></div>
+    <div id="log"></div>
+</div>
+
 <script>
-function logout() {
-    // Remove JWT from localStorage
-    localStorage.removeItem("token");
-    // Redirect to login page
-    window.location.href = "/pipeline.html";
-}
+// 🎯 Open form when button is clicked
+document.getElementById("openFormBtn").addEventListener("click", () => {
+    document.getElementById("studentFormContainer").style.display = "block";
+});
+
+// 🎯 Close form
+document.getElementById("closeFormBtn").addEventListener("click", () => {
+    document.getElementById("studentFormContainer").style.display = "none";
+});
 </script>
 
-
-<h2>Register (Face Pipeline)</h2>
-<input type="text" id="name" placeholder="Enter your name">
-<br>
-<button onclick="runStep('1_capture_images.py')">📸 Capture Images</button>
-<button onclick="runStep('2_crop_faces.py')">✂️ Crop Faces</button>
-<button onclick="runStep('3_generate_embeddings.py')">🧠 Generate Embeddings</button>
-<button onclick="runStep('insert_embedding.py')">🗄 Insert Embeddings</button>
-<button onclick="runStep('4_face_recognition.py')">✅ Run Face Recognition</button>
-
-<div id="log"></div>
+<hr>
 
 <h2>📊 Your Attendance</h2>
 <table id="myAttendance" border="1">
     <thead>
-        <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Date & Time</th>
-        </tr>
+        <tr><th>ID</th><th>Name</th><th>Date & Time</th></tr>
     </thead>
-    <tbody>
-        <!-- Filled dynamically -->
-    </tbody>
+    <tbody></tbody>
 </table>
 
-<script>
-const token = localStorage.getItem("token"); // JWT from login
+<div id="log"></div>
 
-// Fetch and display student attendance
+<button onclick="runFaceRecognition()">✅ Run Face Recognition</button>
+
+
+<script>
+const token = localStorage.getItem("token");
+
+// ======================
+// 📌 Student Registration
+// ======================
+document.getElementById("studentForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const name = document.getElementById("sname").value.trim();
+    const roll = document.getElementById("sroll").value.trim();
+    const sclass = document.getElementById("sclass").value.trim();
+    const email = document.getElementById("semail").value.trim();
+    const phone = document.getElementById("sphone").value.trim();
+
+    try {
+        const res = await fetch("http://localhost:3000/students", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + token
+            },
+            body: JSON.stringify({ name, roll_number: roll, class_name: sclass, email, phone })
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+            document.getElementById("studentMsg").innerText = data.message;
+            // 🔁 Run full pipeline automatically
+            runPipeline(name);
+        } else {
+            document.getElementById("studentMsg").innerText = "❌ Error: " + (data.error || data.message);
+        }
+    } catch (err) {
+        document.getElementById("studentMsg").innerText = "❌ Request failed: " + err;
+    }
+});
+
+
+// ======================
+// 📌 Run full pipeline
+// ======================
+async function runPipeline(name) {
+    const log = document.getElementById("log");
+    log.innerText = "⏳ Running pipeline for " + name + "...";
+
+    try {
+        const res = await fetch(`http://localhost:3000/pipeline/${encodeURIComponent(name)}`, {
+            headers: { "Authorization": "Bearer " + token }
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            log.innerText = `✅ Pipeline finished!\n\n${data.log}`;
+        } else {
+            log.innerText = `❌ Error: ${data.error}\nDetails: ${data.details}`;
+        }
+    } catch (err) {
+        log.innerText = "❌ Request failed: " + err;
+    }
+}
+
+
+// ======================
+// 📌 Face Recognition (separate button)
+// ======================
+async function runFaceRecognition() {
+    const log = document.getElementById("log");
+    log.innerText = "⏳ Running face recognition...";
+
+    try {
+        const res = await fetch("http://localhost:3000/face-recognition", {
+            headers: { "Authorization": "Bearer " + token }
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+            log.innerText = `✅ Face recognition done:\n${data.output}`;
+        } else {
+            log.innerText = `❌ Error: ${data.error}`;
+        }
+    } catch (err) {
+        log.innerText = "❌ Request failed: " + err;
+    }
+}
+
+// ======================
+// 📌 Fetch Attendance
+// ======================
 async function fetchMyAttendance() {
     try {
         const res = await fetch("http://localhost:3000/student/attendance", {
@@ -100,60 +164,22 @@ async function fetchMyAttendance() {
         const tbody = document.querySelector("#myAttendance tbody");
         tbody.innerHTML = "";
         records.forEach(r => {
-            const localTime = new Date(r.timestamp).toLocaleString(); // convert to local time
-            const row = `<tr>
-                <td>${r.attendance_id}</td>
-                <td>${r.name}</td>
-                <td>${localTime}</td>
-            </tr>`;
-            tbody.innerHTML += row;
+            const localTime = new Date(r.timestamp).toLocaleString();
+            tbody.innerHTML += `<tr><td>${r.attendance_id}</td><td>${r.name}</td><td>${localTime}</td></tr>`;
         });
     } catch (err) {
         console.error("❌ Error fetching attendance:", err);
     }
 }
-
-
-// Call immediately after login
 fetchMyAttendance();
 
-// Face recognition pipeline code
-async function runStep(scriptName) {
-    const name = document.getElementById("name").value.trim();
-    const log = document.getElementById("log");
-
-    if (!name && scriptName !== "4_face_recognition.py") {
-        log.innerText = "⚠️ Please enter your name.";
-        return;
-    }
-
-    log.innerText = `⏳ Running ${scriptName}...`;
-
-    try {
-        const url = scriptName === '4_face_recognition.py'
-            ? `http://localhost:3000/run/${scriptName}`
-            : `http://localhost:3000/run/${scriptName}?name=${encodeURIComponent(name)}`;
-
-        const res = await fetch(url);
-        const data = await res.json();
-
-        log.innerText = `✅ ${scriptName} output:\n\n${data.output}`;
-
-        // Refresh attendance table after running face recognition
-        if (scriptName === "4_face_recognition.py") {
-            fetchMyAttendance();
-        }
-    } catch (err) {
-        log.innerText = `❌ Error running ${scriptName}:\n\n${err}`;
-    }
-}
-
-// Logout function
+// ======================
+// 📌 Logout
+// ======================
 function logout() {
     localStorage.removeItem("token");
     window.location.href = "pipeline.html";
 }
 </script>
-
 </body>
 </html>
