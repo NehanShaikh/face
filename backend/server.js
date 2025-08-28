@@ -223,109 +223,125 @@ app.delete('/faculty/attendance/:id', authenticateToken, (req, res) => {
     });
 });
 
-// ---------------- PYTHON SCRIPT RUNNING ----------------
-app.get('/run/:script', (req, res) => {
-    const script = req.params.script;
-    const userName = req.query.name || ""; // <-- get name from query
+// Student self-registration
+app.post("/students", authenticateToken, (req, res) => {
+    if (req.user.role !== "student") {
+        return res.status(403).json({ error: "Only students can self-register" });
+    }
 
-    const allowedScripts = [
-        '1_capture_images.py',
-        '2_crop_faces.py',
-        '3_generate_embeddings.py',
-        'insert_embedding.py',
-        '4_face_recognition.py'
+    const { name, roll_number, class_name, email, phone } = req.body;
+
+    const sql = `INSERT INTO students (name, roll_number, class, email, phone) VALUES (?, ?, ?, ?, ?)`;
+    db.query(sql, [name, roll_number, class_name, email, phone], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        res.json({
+            message: "✅ Student registered successfully!",
+            student_id: result.insertId
+        });
+    });
+});
+
+// Create user login first (no student_id yet)
+app.post("/register-user", (req, res) => {
+    const { username, password } = req.body;
+
+    const sql = "INSERT INTO users (username, password, role) VALUES (?, ?, 'student')";
+    db.query(sql, [username, password], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: "User created, please login and complete registration", user_id: result.insertId });
+    });
+});
+
+// Register Student
+app.post("/api/students", (req, res) => {
+    const { name, roll_number, class_name, email, phone, username } = req.body;
+
+    // Insert into students table
+    const studentSql = `
+        INSERT INTO students (name, roll_number, class, email, phone, registered_on)
+        VALUES (?, ?, ?, ?, ?, NOW())
+    `;
+    db.query(studentSql, [name, roll_number, class_name, email, phone], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        const newStudentId = result.insertId; // <-- newly generated student_id
+
+        // Update users table (where student_id is NULL and username matches)
+        const updateUserSql = `
+            UPDATE users
+            SET student_id = ?
+            WHERE username = ? AND student_id IS NULL
+        `;
+        db.query(updateUserSql, [newStudentId, username], (err2) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+
+            res.json({ 
+                success: true, 
+                message: "Student registered and linked to user successfully!",
+                student_id: newStudentId
+            });
+        });
+    });
+});
+
+
+// ---------------- FULL PIPELINE ----------------
+app.get("/pipeline/:name", (req, res) => {
+    const name = req.params.name;
+    const scripts = [
+        "1_capture_images.py",
+        "2_crop_faces.py",
+        "3_generate_embeddings.py",
+        "insert_embedding.py"
     ];
 
-    if (!allowedScripts.includes(script)) {
-        return res.status(400).send("❌ Script not allowed.");
+    let outputLog = "";
+
+    function runNext(i) {
+        if (i >= scripts.length) {
+            return res.json({ message: "✅ Pipeline completed", log: outputLog });
+        }
+
+        const scriptPath = path.join(__dirname, "python_scripts", scripts[i]);
+        const command = `python3 "${scriptPath}" "${name}"`;
+
+        exec(command, (err, stdout, stderr) => {
+            if (err) {
+                console.error(`❌ Error running ${scripts[i]}:`, stderr);
+                return res.status(500).json({
+                    error: `Failed at ${scripts[i]}`,
+                    details: stderr.toString()
+                });
+            }
+
+            console.log(`✅ Ran ${scripts[i]} for ${name}`);
+            outputLog += `\n----- ${scripts[i]} -----\n${stdout || stderr}\n`;
+
+            runNext(i + 1);
+        });
     }
 
-    const scriptPath = path.join(__dirname, 'python_scripts', script);
+    runNext(0);
+});
 
-    // Add username as argument
-    const command = `/home/hp/Downloads/face/faceenv/bin/python "${scriptPath}" "${userName}"`;
 
+// ---------------- FACE RECOGNITION ----------------
+app.get("/face-recognition", (req, res) => {
+    const scriptPath = path.join(__dirname, "python_scripts", "4_face_recognition.py");
+    const command = `python3 "${scriptPath}"`;
 
     exec(command, (err, stdout, stderr) => {
         if (err) {
-            console.error(`❌ Error running ${script}:`, stderr);
-            return res.status(500).send(`❌ Error:\n${stderr}`);
+            console.error(`❌ Error running face recognition:`, stderr);
+            return res.status(500).json({ error: stderr.toString() });
         }
 
-        console.log(`✅ Successfully ran ${script}`);
-        res.json({ output: stdout.trim() });
+        console.log("✅ Face recognition executed");
+        res.json({ output: stdout || stderr });
     });
 });
 
-app.get('/run_capture/:name', (req, res) => {
-    const script = '1_capture_images.py';
-    const name = req.params.name;
-    const scriptPath = path.join(__dirname, 'python_scripts', script);
-
-    const command = `python3 "${scriptPath}" "${name}"`;
-    exec(command, (err, stdout, stderr) => {
-        if (err) {
-            console.error(`❌ Script error:`, stderr);
-            return res.status(500).json({ output: `Error:\n${stderr}` });
-        }
-
-        console.log(`✅ Ran capture for ${name}`);
-        res.json({ output: stdout.trim() });
-    });
-});
-
-app.get("/crop", (req, res) => {
-    const name = req.query.name;
-
-    if (!name) {
-        return res.status(400).send("❌ Name query parameter missing!");
-    }
-
-    const scriptPath = path.join(__dirname, 'python_scripts', '2_crop_faces.py');
-    const command = `python3 "${scriptPath}" "${name}"`;
-
-    exec(command, (err, stdout, stderr) => {
-        if (err) {
-            console.error(`❌ Error running 2_crop_faces.py:`, stderr);
-            return res.status(500).send(`❌ Error:\n${stderr}`);
-        }
-
-        console.log(`✅ Cropped faces for ${name}`);
-        res.json({ output: stdout.trim() });
-    });
-});
-
-app.post("/crop-faces", (req, res) => {
-  const { name } = req.body;
-  console.log(`⏳ Running 2_crop_faces.py for ${name}...`);
-
-  const process = exec(`python3 backend/python_scripts/2_crop_faces.py ${name}`, (error, stdout, stderr) => {
-    if (error) {
-      console.error(`❌ Error: ${error.message}`);
-      return res.status(500).send("Crop script failed.");
-    }
-    if (stderr) console.error(`⚠️ stderr: ${stderr}`);
-    console.log(`✅ stdout: ${stdout}`);
-    res.send("✅ Cropping done");
-  });
-});
-
-
-app.get('/run_embedding/:name', (req, res) => {
-    const name = req.params.name;
-    const scriptPath = path.join(__dirname, 'python_scripts', 'insert_embedding.py');
-    const command = `python3 "${scriptPath}" "${name}"`;
-
-    exec(command, (err, stdout, stderr) => {
-        if (err) {
-            console.error(`❌ Error running insert_embedding:`, stderr);
-            return res.status(500).json({ error: stderr });
-        }
-
-        console.log(`✅ Embedding inserted for ${name}`);
-        res.send({ output: stdout.trim() });
-    });
-});
 
 // ---------------- CATCH ALL ----------------
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));
