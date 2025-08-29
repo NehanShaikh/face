@@ -6,7 +6,7 @@
 <style>
 body { font-family: Arial, sans-serif; background: #f3f3f3; padding: 30px; text-align: center; }
 button { padding: 8px 12px; margin: 4px; cursor: pointer; }
-table { margin: 20px auto; border-collapse: collapse; width: 90%; background: #fff; }
+table { margin: 20px auto; border-collapse: collapse; width: 95%; background: #fff; }
 th, td { border: 1px solid #ccc; padding: 8px; }
 th { background: #007bff; color: #fff; }
 </style>
@@ -31,7 +31,7 @@ th { background: #007bff; color: #fff; }
 <table id="attendanceTable">
 <thead>
 <tr>
-<th>ID</th><th>Student ID</th><th>Name</th><th>Timestamp</th><th>Actions</th>
+<th>ID</th><th>Student ID</th><th>Name</th><th>Subject ID</th><th>Subject</th><th>Timestamp</th><th>Actions</th>
 </tr>
 </thead>
 <tbody></tbody>
@@ -81,15 +81,17 @@ async function fetchAttendance(){
   const tbody = document.querySelector("#attendanceTable tbody");
   tbody.innerHTML = "";
   records.forEach(r=>{
-    const row = document.createElement("tr");
     const time = new Date(r.timestamp).toLocaleString();
+    row = document.createElement("tr");
     row.innerHTML = `
       <td>${r.attendance_id}</td>
       <td>${r.student_id}</td>
-      <td>${r.name}</td>
+      <td>${r.student_name}</td>
+      <td>${r.subject_id}</td>
+      <td>${r.subject_name}</td>
       <td>${time}</td>
       <td>
-        <button onclick="editAttendance(${r.attendance_id},${r.student_id},'${r.timestamp}')">✏️</button>
+        <button onclick="editAttendance(${r.attendance_id},${r.student_id},${r.subject_id},'${r.subject_name}','${r.timestamp}')">✏️</button>
         <button onclick="deleteAttendance(${r.attendance_id})">🗑️</button>
       </td>`;
     tbody.appendChild(row);
@@ -135,12 +137,15 @@ async function deleteStudent(id){
 
 // ---------- Add Attendance ----------
 async function addAttendance(){
-  const sid = prompt("Student ID"), name=prompt("Student Name");
-  if(!sid||!name) return alert("ID and Name required!");
+  const sid = prompt("Student ID");
+  const subjectId = prompt("Subject ID");
+  const subjectName = prompt("Subject Name");
+  if(!sid || !subjectId || !subjectName) return alert("All fields required!");
+
   const res = await fetch("http://localhost:3000/faculty/attendance",{
     method:"POST",
     headers:{ "Authorization":"Bearer "+token,"Content-Type":"application/json" },
-    body:JSON.stringify({student_id:sid,name})
+    body:JSON.stringify({student_id:sid, subject_id:subjectId, subject_name:subjectName})
   });
   const data = await res.json();
   if(res.ok){ alert(data.message); fetchAttendance(); }
@@ -148,18 +153,21 @@ async function addAttendance(){
 }
 
 // ---------- Edit Attendance ----------
-async function editAttendance(id,sid,timestamp){
+async function editAttendance(id,sid,subjectId,subjectName,timestamp){
   const newSid = prompt("Student ID",sid);
+  const newSubjectId = prompt("Subject ID",subjectId);
+  const newSubjectName = prompt("Subject Name",subjectName);
   const ts = prompt("Timestamp YYYY-MM-DD HH:MM:SS",timestamp);
-  if(!newSid||!ts) return alert("Required!");
+  if(!newSid || !newSubjectId || !newSubjectName || !ts) return alert("Required!");
+
   const res = await fetch(`http://localhost:3000/faculty/attendance/${id}`,{
     method:"PUT",
     headers:{ "Authorization":"Bearer "+token,"Content-Type":"application/json" },
-    body:JSON.stringify({student_id:newSid,timestamp:ts})
+    body:JSON.stringify({student_id:newSid, subject_id:newSubjectId, subject_name:newSubjectName, timestamp:ts})
   });
   const data = await res.json();
   if(res.ok){ alert(data.message); fetchAttendance(); }
-  else alert(data.error);
+  else alert(data.error||data.message);
 }
 
 // ---------- Delete Attendance ----------
