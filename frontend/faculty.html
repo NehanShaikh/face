@@ -26,6 +26,7 @@ th { background: #007bff; color: #fff; }
 <tbody></tbody>
 </table>
 
+
 <h2>🗂 Attendance Records</h2>
 <button onclick="addAttendance()">➕ Add Attendance</button>
 <table id="attendanceTable">
@@ -36,6 +37,23 @@ th { background: #007bff; color: #fff; }
 </thead>
 <tbody></tbody>
 </table>
+
+<h2>📅 Timetable Management</h2>
+<button onclick="addTimetable()">➕ Add Timetable</button>
+<table id="timetableTable">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Subject</th>
+      <th>Day</th>
+      <th>Start Time</th>
+      <th>End Time</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 
 <script>
 const token = localStorage.getItem("token");
@@ -179,9 +197,86 @@ async function deleteAttendance(id){
   else alert(data.error||data.message);
 }
 
+// ---------- Fetch Timetable ----------
+// ---------- Fetch Timetable ----------
+async function fetchTimetable(){
+  const res = await fetch("http://localhost:3000/faculty/timetable", {
+    headers: { "Authorization": "Bearer " + token }
+  });
+  const rows = await res.json();
+  const tbody = document.querySelector("#timetableTable tbody");
+  tbody.innerHTML = "";
+  rows.forEach(r=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${r.timetable_id}</td>
+      <td>${r.subject_name}</td>
+      <td>${r.day}</td>
+      <td>${r.start_time}</td>
+      <td>${r.end_time}</td>
+      <td>
+        <button onclick="editTimetable(${r.timetable_id}, '${r.day}', '${r.start_time}', '${r.end_time}', ${r.subject_id})">✏️</button>
+        <button onclick="deleteTimetable(${r.timetable_id})">🗑️</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+
+// ---------- Add Timetable ----------
+async function addTimetable(){
+  const subject_id = prompt("Subject ID");
+  const day = prompt("Day (e.g. Monday)");
+  const start_time = prompt("Start Time (HH:MM:SS)");
+  const end_time = prompt("End Time (HH:MM:SS)");
+
+  if(!subject_id||!day||!start_time||!end_time) return alert("All fields required!");
+
+  const res = await fetch("http://localhost:3000/faculty/timetable",{
+    method:"POST",
+    headers:{ "Authorization":"Bearer "+token, "Content-Type":"application/json" },
+    body:JSON.stringify({subject_id, day, start_time, end_time})
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchTimetable(); }
+  else alert(data.error||data.message);
+}
+
+
+// ---------- Edit Timetable ----------
+async function editTimetable(id, day, start_time, end_time, subject_id){
+  const newDay = prompt("Day", day);
+  const newStart = prompt("Start Time", start_time);
+  const newEnd = prompt("End Time", end_time);
+  const newSubject = prompt("Subject ID", subject_id);
+  if(!newDay||!newStart||!newEnd||!newSubject) return;
+
+  const res = await fetch(`http://localhost:3000/faculty/timetable/${id}`,{
+    method:"PUT",
+    headers:{ "Authorization":"Bearer "+token, "Content-Type":"application/json" },
+    body:JSON.stringify({subject_id:newSubject, day:newDay, start_time:newStart, end_time:newEnd})
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchTimetable(); }
+  else alert(data.error||data.message);
+}
+
+// ---------- Delete Timetable ----------
+async function deleteTimetable(id){
+  if(!confirm("Delete timetable entry?")) return;
+  const res = await fetch(`http://localhost:3000/faculty/timetable/${id}`,{
+    method:"DELETE", headers:{"Authorization":"Bearer "+token}
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchTimetable(); }
+  else alert(data.error||data.message);
+}
+
+
 // ---------- Initial Load ----------
 fetchStudents();
 fetchAttendance();
+fetchTimetable(); 
 
 </script>
 </body>
