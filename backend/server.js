@@ -1,5 +1,5 @@
 const express = require('express');
-const mysql = require('mysql');
+const mysql = require('mysql2');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const { exec } = require('child_process');
@@ -65,64 +65,126 @@ app.post("/login", (req, res) => {
 });
 
 
-app.post('/attendance', (req, res) => {
-    const { name } = req.body;
+app.post('/attendance', async (req, res) => {
+    try {
+        const { name } = req.body;
 
-    const getStudentIdQuery = "SELECT student_id FROM students WHERE name = ?";
-    db.query(getStudentIdQuery, [name], (err, results) => {
-        if (err) {
-            console.error("❌ Error fetching student_id:", err);
-            return res.status(500).send("Internal Server Error");
-        }
+        // 1. Find student_id
+        const [studentRows] = await db.promise().query(
+            "SELECT student_id FROM students WHERE name = ?",
+            [name]
+        );
 
-        if (results.length === 0) {
+        if (studentRows.length === 0) {
             console.warn("⚠️ Student not found:", name);
             return res.status(404).send("Student not found");
         }
 
-        const student_id = results[0].student_id;
+        const studentId = studentRows[0].student_id;
 
-        const insertAttendanceQuery = "INSERT INTO attendance (student_id, name) VALUES (?, ?)";
-        db.query(insertAttendanceQuery, [student_id, name], (err, result) => {
-            if (err) {
-                console.error("❌ Error inserting attendance:", err);
-                return res.status(500).send("Failed to mark attendance");
-            }
+        // 2. Find current subject_id from timetable
+        const [rows] = await db.promise().query(
+        `SELECT s.subject_id, s.name AS subject_name
+        FROM timetable t
+        JOIN subjects s ON t.subject_id = s.subject_id
+        WHERE t.day = DAYNAME(NOW())
+        AND TIME(NOW()) BETWEEN t.start_time AND t.end_time
+        LIMIT 1`
+        );
 
-            console.log(`✅ Attendance marked for ${name} (ID: ${student_id})`);
-            res.send({ status: "success", student_id });
-        });
-    });
-});
 
-// ✅ GET /attendance — Fetch logs
-app.get('/attendance', (req, res) => {
-    const sql = `
-        SELECT a.attendance_id, a.name, a.timestamp
-        FROM attendance a
-        ORDER BY a.timestamp DESC
-    `;
-    db.query(sql, (err, results) => {
-        if (err) {
-            console.error("❌ Error fetching attendance:", err);
-            return res.status(500).send("Failed to retrieve attendance");
+        if (rows.length === 0) {
+            console.warn("⚠️ No subject found for current time");
+            return res.status(404).send("No subject at this time");
         }
 
-        res.send(results);
-    });
+        const subjectId = rows[0].subject_id;
+        const subjectName = rows[0].subject_name;
+
+        // 3. Prevent duplicate marking for same subject & day
+        const [check] = await db.promise().query(
+            `SELECT * FROM attendance
+             WHERE student_id = ? 
+             AND subject_id = ?
+             AND DATE(timestamp) = CURDATE()`,
+            [studentId, subjectId]
+        );
+
+        if (check.length > 0) {
+            console.log(`⚠️ Attendance already marked for ${name} in ${subjectName}`);
+            return res.status(400).send("Attendance already marked for this subject today");
+        }
+
+        // 4. Insert attendance
+        await db.promise().query(
+                "INSERT INTO attendance (student_id, subject_id, subject_name) VALUES (?, ?, ?)",
+                [studentId, subjectId, subjectName]
+                );
+
+
+        console.log(`✅ Attendance marked for ${name} (ID: ${studentId}, Subject: ${subjectName})`);
+        res.send({ status: "success", student_id: studentId, subject: subjectName });
+
+    } catch (err) {
+        console.error("❌ Error in attendance route:", err);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
+
+// ✅ GET /attendance — Fetch logs
+app.get('/attendance', async (req, res) => {
+    try {
+        const [rows] = await db.promise().query(
+            `SELECT a.attendance_id,
+                    st.name AS student_name,
+                    s.name AS subject_name,
+                    a.timestamp
+             FROM attendance a
+             JOIN students st ON a.student_id = st.student_id
+             JOIN subjects s ON a.subject_id = s.subject_id
+             ORDER BY a.timestamp DESC`
+        );
+
+        res.json(rows);
+    } catch (err) {
+        console.error("❌ Error fetching attendance:", err);
+        res.status(500).send("Internal Server Error");
+    }
 });
 
 // ---------------- STUDENT ROUTES ----------------
 // Get student attendance (student)
-app.get('/student/attendance', authenticateToken, (req, res) => {
-    if (req.user.role !== 'student') return res.status(403).json({ error: "Forbidden" });
+// ---------------- STUDENT ROUTES ----------------
+// Get student attendance (student)
+// Get student attendance (student)
+app.get("/student/attendance", authenticateToken, (req, res) => {
+    if (req.user.role !== "student") {
+        return res.status(403).json({ error: "Forbidden" });
+    }
 
-    const sql = "SELECT attendance_id, name, timestamp FROM attendance WHERE student_id=? ORDER BY timestamp DESC";
+    const sql = `
+        SELECT a.attendance_id,
+               st.student_id,
+               st.name AS student_name,
+               s.name AS subject_name,
+               a.timestamp
+        FROM attendance a
+        JOIN students st ON a.student_id = st.student_id
+        JOIN subjects s ON a.subject_id = s.subject_id
+        WHERE st.student_id = ?
+        ORDER BY a.timestamp DESC
+    `;
+
     db.query(sql, [req.user.student_id], (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+            console.error("❌ Error fetching attendance:", err);
+            return res.status(500).json({ error: "Database error" });
+        }
         res.json(results);
     });
 });
+
 
 // ---------------- FACULTY ROUTES ----------------
 // Get all students
@@ -175,53 +237,79 @@ app.delete('/faculty/students/:id', authenticateToken, (req, res) => {
 });
 
 // Get all attendance records
-app.get('/faculty/attendance', authenticateToken, (req, res) => {
-    if (req.user.role !== 'faculty') return res.status(403).json({ error: "Forbidden" });
+// Get all attendance records with student + subject name
+// Get attendance records (faculty only)
+app.get("/faculty/attendance", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
 
-    db.query("SELECT * FROM attendance ORDER BY timestamp DESC", (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(results);
-    });
+  const sql = `
+    SELECT a.attendance_id, 
+           a.student_id, 
+           s.name AS student_name, 
+           a.subject_id, 
+           a.subject_name, 
+           a.timestamp
+    FROM attendance a
+    JOIN students s ON a.student_id = s.student_id
+    ORDER BY a.timestamp DESC
+  `;
+  db.query(sql, (err, result) => {
+    if (err) return res.status(500).json({ error: "Database error" });
+    res.json(result);
+  });
 });
 
 // Add attendance
-app.post('/faculty/attendance', authenticateToken, (req, res) => {
-    if (req.user.role !== 'faculty') return res.status(403).json({ error: "Forbidden" });
+app.post("/faculty/attendance", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
 
-    const { student_id, name } = req.body;
-    const sql = "INSERT INTO attendance (student_id, name, timestamp) VALUES (?, ?, NOW())";
-    db.query(sql, [student_id, name], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: "Attendance added", attendance_id: result.insertId });
-    });
+  const { student_id, subject_id, subject_name } = req.body;
+  if (!student_id || !subject_id || !subject_name) {
+    return res.status(400).json({ error: "Student ID, Subject ID, and Subject Name are required" });
+  }
+
+  const sql = `
+    INSERT INTO attendance (student_id, subject_id, subject_name)
+    VALUES (?, ?, ?)
+  `;
+  db.query(sql, [student_id, subject_id, subject_name], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: "Attendance added", attendance_id: result.insertId });
+  });
 });
 
 // Update attendance
-app.put('/faculty/attendance/:id', authenticateToken, (req, res) => {
-    if (req.user.role !== 'faculty') return res.status(403).json({ error: "Forbidden" });
+app.put("/faculty/attendance/:id", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
 
-    const id = req.params.id;
-    const { student_id, timestamp } = req.body;
-    const sql = "UPDATE attendance SET student_id=?, timestamp=? WHERE attendance_id=?";
-    db.query(sql, [student_id, timestamp, id], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (result.affectedRows === 0) return res.status(404).json({ error: "Attendance not found" });
-        res.json({ message: "Attendance updated" });
-    });
+  const { id } = req.params;
+  const { student_id, subject_id, subject_name, timestamp } = req.body;
+
+  const sql = `
+    UPDATE attendance 
+    SET student_id=?, subject_id=?, subject_name=?, timestamp=?
+    WHERE attendance_id=?
+  `;
+  db.query(sql, [student_id, subject_id, subject_name, timestamp, id], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result.affectedRows === 0) return res.status(404).json({ error: "Attendance not found" });
+    res.json({ message: "Attendance updated" });
+  });
 });
 
 // Delete attendance
-app.delete('/faculty/attendance/:id', authenticateToken, (req, res) => {
-    if (req.user.role !== 'faculty') return res.status(403).json({ error: "Forbidden" });
+app.delete("/faculty/attendance/:id", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
 
-    const id = req.params.id;
-    const sql = "DELETE FROM attendance WHERE attendance_id=?";
-    db.query(sql, [id], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (result.affectedRows === 0) return res.status(404).json({ error: "Attendance not found" });
-        res.json({ message: "Attendance deleted" });
-    });
+  const { id } = req.params;
+  const sql = "DELETE FROM attendance WHERE attendance_id=?";
+  db.query(sql, [id], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result.affectedRows === 0) return res.status(404).json({ error: "Attendance not found" });
+    res.json({ message: "Attendance deleted" });
+  });
 });
+
 
 // Student self-registration
 app.post("/students", authenticateToken, (req, res) => {
@@ -285,6 +373,25 @@ app.post("/api/students", (req, res) => {
     });
 });
 
+// ✅ Student Timetable Route
+app.get('/student/timetable', authenticateToken, (req, res) => {
+    if (req.user.role !== 'student') return res.status(403).json({ error: "Forbidden" });
+
+    const sql = `
+        SELECT t.timetable_id, t.day, t.start_time, t.end_time, s.name AS subject
+        FROM student_timetable st
+        JOIN timetable t ON st.timetable_id = t.timetable_id
+        JOIN subjects s ON t.subject_id = s.subject_id
+        WHERE st.student_id = ?
+        ORDER BY FIELD(t.day, 'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'),
+                 t.start_time;
+    `;
+
+    db.query(sql, [req.user.student_id], (err, results) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(results);
+    });
+});
 
 // ---------------- FULL PIPELINE ----------------
 app.get("/pipeline/:name", (req, res) => {
