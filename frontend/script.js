@@ -106,6 +106,24 @@ async function addStudent() {
     fetchStudents();
 }
 
+async function runFaceAttendance() {
+    const log = document.getElementById("log");
+    log.innerText = "⏳ Running face recognition + timetable check...\n";
+
+    try {
+        const res = await fetch("http://localhost:3000/face-attendance", {
+            headers: { "Authorization": "Bearer " + token }
+        });
+        const data = await res.json();
+
+        log.innerText += data.log || data.message;
+        fetchMyAttendance(); // refresh table
+    } catch (err) {
+        log.innerText += "\n❌ Request failed: " + err;
+    }
+}
+
+
 // Logout
 function logout() {
     localStorage.removeItem("token");
