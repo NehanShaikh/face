@@ -27,6 +27,26 @@ db.connect(err => {
     console.log("✅ MySQL Connected!");
 });
 
+
+function authenticateFaculty(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader) return res.sendStatus(401);
+
+  const token = authHeader.split(" ")[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, "secretkey", (err, user) => {   // 🔥 use same secret as /login
+    if (err) return res.sendStatus(403);
+
+    if (user.role !== "faculty") {
+      return res.status(403).json({ error: "Access denied: Not a faculty" });
+    }
+
+    req.user = user; // req.user.faculty_id is now available
+    next();
+  });
+}
+
 // ---------------- AUTH ----------------
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
@@ -239,25 +259,25 @@ app.delete('/faculty/students/:id', authenticateToken, (req, res) => {
 // Get all attendance records
 // Get all attendance records with student + subject name
 // Get attendance records (faculty only)
-app.get("/faculty/attendance", authenticateToken, (req, res) => {
-  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
+app.get("/faculty/attendance", authenticateFaculty, (req, res) => {
+  const facultyId = req.user.faculty_id;  // 🔥 use faculty_id, not id
 
   const sql = `
-    SELECT a.attendance_id, 
-           a.student_id, 
-           s.name AS student_name, 
-           a.subject_id, 
-           a.subject_name, 
-           a.timestamp
+    SELECT a.attendance_id, a.student_id, s.name AS student_name,
+           a.subject_id, sub.name AS subject_name, a.timestamp
     FROM attendance a
     JOIN students s ON a.student_id = s.student_id
+    JOIN subjects sub ON a.subject_id = sub.subject_id
+    WHERE sub.faculty_id = ? 
     ORDER BY a.timestamp DESC
   `;
-  db.query(sql, (err, result) => {
+
+  db.query(sql, [facultyId], (err, results) => {
     if (err) return res.status(500).json({ error: "Database error" });
-    res.json(result);
+    res.json(results);
   });
 });
+
 
 // Add attendance
 app.post("/faculty/attendance", authenticateToken, (req, res) => {
@@ -392,6 +412,82 @@ app.get('/student/timetable', authenticateToken, (req, res) => {
         res.json(results);
     });
 });
+
+// Get timetable for logged-in faculty
+// Get timetable for logged-in faculty
+app.get("/faculty/timetable", authenticateFaculty, (req, res) => {
+  const facultyId = req.user.faculty_id; // comes from JWT
+
+  const sql = `
+    SELECT t.timetable_id, t.subject_id, s.name AS subject_name, 
+           t.day, t.start_time, t.end_time
+    FROM timetable t
+    JOIN subjects s ON t.subject_id = s.subject_id
+    WHERE s.faculty_id = ?
+    ORDER BY FIELD(t.day, 'Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'),
+             t.start_time
+  `;
+
+  db.query(sql, [facultyId], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(results);
+  });
+});
+
+// Add timetable entry (restricted to logged-in faculty)
+app.post("/faculty/timetable", authenticateFaculty, (req, res) => {
+  const facultyId = req.user.faculty_id;
+  const { subject_id, day, start_time, end_time } = req.body;
+
+  // Validate subject belongs to faculty
+  const checkSql = "SELECT * FROM subjects WHERE subject_id = ? AND faculty_id = ?";
+  db.query(checkSql, [subject_id, facultyId], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (results.length === 0) return res.status(403).json({ error: "Not authorized for this subject" });
+
+    // Now insert timetable row
+    const sql = `INSERT INTO timetable (subject_id, day, start_time, end_time) VALUES (?, ?, ?, ?)`;
+    db.query(sql, [subject_id, day, start_time, end_time], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ message: "Timetable entry added successfully" });
+    });
+  });
+});
+
+// Update timetable entry (only if faculty owns it)
+app.put("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
+  const facultyId = req.user.faculty_id;
+  const timetableId = req.params.id;
+  const { day, start_time, end_time } = req.body;
+
+  const sql = `
+    UPDATE timetable 
+    SET day = ?, start_time = ?, end_time = ?
+    WHERE timetable_id = ? AND faculty_id = ?
+  `;
+
+  db.query(sql, [day, start_time, end_time, timetableId, facultyId], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result.affectedRows === 0) return res.status(403).json({ error: "Not authorized" });
+    res.json({ message: "Timetable updated successfully" });
+  });
+});
+
+// Delete timetable entry (only if faculty owns it)
+app.delete("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
+  const facultyId = req.user.faculty_id;
+  const timetableId = req.params.id;
+
+  const sql = `DELETE FROM timetable WHERE timetable_id = ? AND faculty_id = ?`;
+
+  db.query(sql, [timetableId, facultyId], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result.affectedRows === 0) return res.status(403).json({ error: "Not authorized" });
+    res.json({ message: "Timetable deleted successfully" });
+  });
+});
+
+
 
 // ---------------- FULL PIPELINE ----------------
 app.get("/pipeline/:name", (req, res) => {
