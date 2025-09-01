@@ -60,6 +60,25 @@ function authenticateToken(req, res, next) {
     });
 }
 
+
+// Middleware to authenticate student
+function authenticateStudent(req, res, next) {
+  const token = req.headers["authorization"]; // Bearer <token>
+  if (!token) return res.status(401).json({ message: "No token provided" });
+
+  try {
+    const decoded = jwt.verify(token.split(" ")[1], "your_secret_key");
+    if (decoded.role !== "student") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    req.user = decoded; // will contain student_id, role, etc.
+    next();
+  } catch (err) {
+    console.error(err);
+    res.status(401).json({ message: "Invalid token" });
+  }
+}
+
 // ---------------- LOGIN ----------------
 app.post("/login", (req, res) => {
     const { username, password } = req.body;
@@ -85,6 +104,9 @@ app.post("/login", (req, res) => {
 });
 
 
+// ================== Attendance Routes ==================
+
+// Student marks their attendance (with subject check)
 app.post('/attendance', async (req, res) => {
     try {
         const { name } = req.body;
@@ -102,26 +124,28 @@ app.post('/attendance', async (req, res) => {
 
         const studentId = studentRows[0].student_id;
 
-        // 2. Find current subject_id from timetable
+        // 2. Find current subject from timetable where student is enrolled
         const [rows] = await db.promise().query(
-        `SELECT s.subject_id, s.name AS subject_name
-        FROM timetable t
-        JOIN subjects s ON t.subject_id = s.subject_id
-        WHERE t.day = DAYNAME(NOW())
-        AND TIME(NOW()) BETWEEN t.start_time AND t.end_time
-        LIMIT 1`
+            `SELECT s.subject_id, s.name AS subject_name
+             FROM timetable t
+             JOIN subjects s ON t.subject_id = s.subject_id
+             JOIN student_timetable st ON st.timetable_id = t.timetable_id
+             WHERE st.student_id = ?
+             AND LOWER(t.day) IN (LOWER(DAYNAME(NOW())), LOWER(DATE_FORMAT(NOW(), '%a')))
+             AND TIME(NOW()) BETWEEN t.start_time AND ADDTIME(t.end_time, '00:05:00')
+             LIMIT 1`,
+            [studentId]
         );
 
-
         if (rows.length === 0) {
-            console.warn("⚠️ No subject found for current time");
-            return res.status(404).send("No subject at this time");
+            console.warn("⚠️ No subject found for current time or student not enrolled");
+            return res.status(404).send("No subject at this time or not enrolled");
         }
 
         const subjectId = rows[0].subject_id;
         const subjectName = rows[0].subject_name;
 
-        // 3. Prevent duplicate marking for same subject & day
+        // 3. Prevent duplicate marking
         const [check] = await db.promise().query(
             `SELECT * FROM attendance
              WHERE student_id = ? 
@@ -137,10 +161,9 @@ app.post('/attendance', async (req, res) => {
 
         // 4. Insert attendance
         await db.promise().query(
-                "INSERT INTO attendance (student_id, subject_id, subject_name) VALUES (?, ?, ?)",
-                [studentId, subjectId, subjectName]
-                );
-
+            "INSERT INTO attendance (student_id, subject_id, subject_name) VALUES (?, ?, ?)",
+            [studentId, subjectId, subjectName]
+        );
 
         console.log(`✅ Attendance marked for ${name} (ID: ${studentId}, Subject: ${subjectName})`);
         res.send({ status: "success", student_id: studentId, subject: subjectName });
@@ -154,24 +177,25 @@ app.post('/attendance', async (req, res) => {
 
 // ✅ GET /attendance — Fetch logs
 app.get('/attendance', async (req, res) => {
-    try {
-        const [rows] = await db.promise().query(
-            `SELECT a.attendance_id,
-                    st.name AS student_name,
-                    s.name AS subject_name,
-                    a.timestamp
-             FROM attendance a
-             JOIN students st ON a.student_id = st.student_id
-             JOIN subjects s ON a.subject_id = s.subject_id
-             ORDER BY a.timestamp DESC`
-        );
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT a.attendance_id,
+              st.name AS student_name,
+              s.name AS subject_name,
+              a.timestamp
+       FROM attendance a
+       JOIN students st ON a.student_id = st.student_id
+       JOIN subjects s ON a.subject_id = s.subject_id
+       ORDER BY a.timestamp DESC`
+    );
 
-        res.json(rows);
-    } catch (err) {
-        console.error("❌ Error fetching attendance:", err);
-        res.status(500).send("Internal Server Error");
-    }
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error fetching attendance:", err);
+    res.status(500).send("Internal Server Error");
+  }
 });
+
 
 // ---------------- STUDENT ROUTES ----------------
 // Get student attendance (student)
@@ -461,9 +485,10 @@ app.put("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
   const { day, start_time, end_time } = req.body;
 
   const sql = `
-    UPDATE timetable 
-    SET day = ?, start_time = ?, end_time = ?
-    WHERE timetable_id = ? AND faculty_id = ?
+    UPDATE timetable t
+    JOIN subjects s ON t.subject_id = s.subject_id
+    SET t.day = ?, t.start_time = ?, t.end_time = ?
+    WHERE t.timetable_id = ? AND s.faculty_id = ?
   `;
 
   db.query(sql, [day, start_time, end_time, timetableId, facultyId], (err, result) => {
@@ -473,12 +498,17 @@ app.put("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
   });
 });
 
+
 // Delete timetable entry (only if faculty owns it)
 app.delete("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
   const facultyId = req.user.faculty_id;
   const timetableId = req.params.id;
 
-  const sql = `DELETE FROM timetable WHERE timetable_id = ? AND faculty_id = ?`;
+  const sql = `
+    DELETE t FROM timetable t
+    JOIN subjects s ON t.subject_id = s.subject_id
+    WHERE t.timetable_id = ? AND s.faculty_id = ?
+  `;
 
   db.query(sql, [timetableId, facultyId], (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -486,6 +516,7 @@ app.delete("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
     res.json({ message: "Timetable deleted successfully" });
   });
 });
+
 
 
 
