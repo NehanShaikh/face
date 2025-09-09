@@ -26,6 +26,17 @@ th { background: #007bff; color: #fff; }
 <tbody></tbody>
 </table>
 
+<h2>👨‍🏫 Assigned Students</h2>
+<button onclick="assignStudent()">➕ Assign Student</button>
+<table id="assignedTable">
+  <thead>
+    <tr>
+      <th>ID</th><th>Student ID</th><th>Name</th><th>Roll</th><th>Class</th><th>Email</th><th>Phone</th><th>Assigned On</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 
 <h2>🗂 Attendance Records</h2>
 <button onclick="addAttendance()">➕ Add Attendance</button>
@@ -89,6 +100,58 @@ async function fetchStudents(){
     tbody.appendChild(row);
   });
 }
+
+// ---------- Fetch Assigned Students ----------
+async function fetchAssigned(){
+  const res = await fetch("http://localhost:3000/faculty/assigned-students", {
+    headers: { "Authorization": "Bearer " + token }
+  });
+  const students = await res.json();
+  const tbody = document.querySelector("#assignedTable tbody");
+  tbody.innerHTML = "";
+  students.forEach(s=>{
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${s.id}</td>
+      <td>${s.student_id}</td>
+      <td>${s.name}</td>
+      <td>${s.roll_number}</td>
+      <td>${s.class}</td>
+      <td>${s.email}</td>
+      <td>${s.phone}</td>
+      <td>${new Date(s.assigned_on).toLocaleString()}</td>
+      <td>
+        <button onclick="unassignStudent(${s.student_id})">🗑️ Unassign</button>
+      </td>`;
+    tbody.appendChild(row);
+  });
+}
+
+// ---------- Assign Student ----------
+async function assignStudent(){
+  const studentId = prompt("Enter Student ID to assign");
+  if(!studentId) return;
+  const res = await fetch("http://localhost:3000/faculty/assigned-students",{
+    method:"POST",
+    headers:{ "Authorization":"Bearer "+token,"Content-Type":"application/json" },
+    body:JSON.stringify({ student_id: studentId })
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchAssigned(); }
+  else alert(data.error||data.message);
+}
+
+// ---------- Unassign Student ----------
+async function unassignStudent(studentId){
+  if(!confirm("Unassign student?")) return;
+  const res = await fetch(`http://localhost:3000/faculty/assigned-students/${studentId}`,{
+    method:"DELETE", headers:{"Authorization":"Bearer "+token}
+  });
+  const data = await res.json();
+  if(res.ok){ alert(data.message); fetchAssigned(); }
+  else alert(data.error||data.message);
+}
+
 
 // ---------- Fetch Attendance ----------
 async function fetchAttendance(){
@@ -274,7 +337,8 @@ async function deleteTimetable(id){
 
 
 // ---------- Initial Load ----------
-fetchStudents();
+fetchStudents();  // already existing (all students)
+fetchAssigned();  // new function
 fetchAttendance();
 fetchTimetable(); 
 
