@@ -280,27 +280,84 @@ app.delete('/faculty/students/:id', authenticateToken, (req, res) => {
     });
 });
 
-// Get all attendance records
-// Get all attendance records with student + subject name
-// Get attendance records (faculty only)
-app.get("/faculty/attendance", authenticateFaculty, (req, res) => {
-  const facultyId = req.user.faculty_id;  // 🔥 use faculty_id, not id
+
+app.get("/faculty/assigned-students", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
+
+  const facultyId = req.user.faculty_id;
 
   const sql = `
-    SELECT a.attendance_id, a.student_id, s.name AS student_name,
-           a.subject_id, sub.name AS subject_name, a.timestamp
-    FROM attendance a
-    JOIN students s ON a.student_id = s.student_id
-    JOIN subjects sub ON a.subject_id = sub.subject_id
-    WHERE sub.faculty_id = ? 
-    ORDER BY a.timestamp DESC
+    SELECT fs.id, s.student_id, s.name, s.roll_number, s.class, s.email, s.phone, fs.assigned_on
+    FROM faculty_students fs
+    JOIN students s ON fs.student_id = s.student_id
+    WHERE fs.faculty_id = ?
   `;
-
   db.query(sql, [facultyId], (err, results) => {
-    if (err) return res.status(500).json({ error: "Database error" });
+    if (err) return res.status(500).json({ error: err.message });
     res.json(results);
   });
 });
+
+app.post("/faculty/assigned-students", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
+
+  const facultyId = req.user.faculty_id;
+  const { student_id } = req.body;
+
+  const sql = "INSERT INTO faculty_students (faculty_id, student_id) VALUES (?, ?)";
+  db.query(sql, [facultyId, student_id], (err, result) => {
+    if (err) {
+      if (err.code === "ER_DUP_ENTRY") {
+        return res.status(400).json({ error: "Student already assigned" });
+      }
+      return res.status(500).json({ error: err.message });
+    }
+
+    // ✅ Assign all subject timetables of this faculty
+    const assignSql = `
+      INSERT INTO student_timetable (student_id, timetable_id)
+      SELECT ?, t.timetable_id
+      FROM timetable t
+      JOIN subjects sub ON t.subject_id = sub.subject_id
+      WHERE sub.faculty_id = ?
+      ON DUPLICATE KEY UPDATE student_id = student_id
+    `;
+    db.query(assignSql, [student_id, facultyId], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ message: "✅ Student assigned and timetable updated", id: result.insertId });
+    });
+  });
+});
+
+app.delete("/faculty/assigned-students/:studentId", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty") return res.status(403).json({ error: "Forbidden" });
+
+  const facultyId = req.user.faculty_id;
+  const { studentId } = req.params;
+
+  const sql = "DELETE FROM faculty_students WHERE faculty_id = ? AND student_id = ?";
+  db.query(sql, [facultyId, studentId], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Student not assigned to this faculty" });
+    }
+
+    // ✅ Remove student from this faculty’s subject timetables
+    const deleteSql = `
+      DELETE st
+      FROM student_timetable st
+      JOIN timetable t ON st.timetable_id = t.timetable_id
+      JOIN subjects sub ON t.subject_id = sub.subject_id
+      WHERE st.student_id = ? AND sub.faculty_id = ?
+    `;
+    db.query(deleteSql, [studentId, facultyId], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ message: "✅ Student unassigned and timetable updated" });
+    });
+  });
+});
+
 
 
 // Add attendance
