@@ -1,6 +1,6 @@
 -- Students Table
 CREATE TABLE students (
-    student_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     roll_number VARCHAR(20) NOT NULL UNIQUE,
     class VARCHAR(20),
@@ -76,4 +76,22 @@ CREATE TABLE users (
     faculty_id INT,
     FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (faculty_id) REFERENCES faculty(faculty_id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE faculty_students (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    faculty_id INT NOT NULL,
+    student_id INT NOT NULL,
+    assigned_on DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Foreign key references (assuming you have faculty & students tables)
+    CONSTRAINT fk_faculty
+        FOREIGN KEY (faculty_id) REFERENCES faculty(faculty_id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+        
+    CONSTRAINT fk_student
+        FOREIGN KEY (student_id) REFERENCES students(student_id)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
 );
