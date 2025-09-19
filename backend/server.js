@@ -5,9 +5,12 @@ const bodyParser = require('body-parser');
 const { exec } = require('child_process');
 const path = require('path');
 const jwt = require('jsonwebtoken');
+const bcrypt = require("bcryptjs");
 
 const app = express();
 const port = 3000;
+
+const JWT_SECRET = "super_secret_key";   // ✅ use ONE secret everywhere
 
 // ---------------- MIDDLEWARE ----------------
 app.use(cors());
@@ -27,7 +30,7 @@ db.connect(err => {
     console.log("✅ MySQL Connected!");
 });
 
-
+// ---------------- AUTH MIDDLEWARE ----------------
 function authenticateFaculty(req, res, next) {
   const authHeader = req.headers["authorization"];
   if (!authHeader) return res.sendStatus(401);
@@ -35,43 +38,47 @@ function authenticateFaculty(req, res, next) {
   const token = authHeader.split(" ")[1];
   if (!token) return res.sendStatus(401);
 
-  jwt.verify(token, "secretkey", (err, user) => {   // 🔥 use same secret as /login
+  jwt.verify(token, JWT_SECRET, (err, user) => {   // ✅ fixed secret usage
     if (err) return res.sendStatus(403);
 
     if (user.role !== "faculty") {
       return res.status(403).json({ error: "Access denied: Not a faculty" });
     }
 
-    req.user = user; // req.user.faculty_id is now available
+    req.user = user; 
     next();
   });
 }
 
-// ---------------- AUTH ----------------
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
     if (!token) return res.sendStatus(401);
 
-    jwt.verify(token, "secretkey", (err, user) => {
+    jwt.verify(token, JWT_SECRET, (err, user) => {   // ✅ fixed secret usage
         if (err) return res.sendStatus(403);
         req.user = user;
         next();
     });
 }
 
+function isAdmin(req, res, next) {
+  if (req.user && req.user.role === "admin") {
+    return next();
+  }
+  return res.status(403).json({ error: "Access denied. Admins only." });
+}
 
-// Middleware to authenticate student
 function authenticateStudent(req, res, next) {
-  const token = req.headers["authorization"]; // Bearer <token>
+  const token = req.headers["authorization"];
   if (!token) return res.status(401).json({ message: "No token provided" });
 
   try {
-    const decoded = jwt.verify(token.split(" ")[1], "your_secret_key");
+    const decoded = jwt.verify(token.split(" ")[1], JWT_SECRET); // ✅ fixed
     if (decoded.role !== "student") {
       return res.status(403).json({ message: "Access denied" });
     }
-    req.user = decoded; // will contain student_id, role, etc.
+    req.user = decoded; 
     next();
   } catch (err) {
     console.error(err);
@@ -81,26 +88,47 @@ function authenticateStudent(req, res, next) {
 
 // ---------------- LOGIN ----------------
 app.post("/login", (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password)
-        return res.status(400).json({ error: "Username and password required" });
+  const { username, password } = req.body;
 
-    const sql = "SELECT * FROM users WHERE username=? AND password=?";
-    db.query(sql, [username, password], (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (results.length === 0) return res.status(401).json({ error: "Invalid credentials" });
+  db.query("SELECT * FROM users WHERE username = ?", [username], (err, results) => {
+    if (err) return res.status(500).json({ message: "DB error" });
+    if (results.length === 0) return res.status(401).json({ message: "Invalid credentials" });
 
-        const user = results[0];
-        const token = jwt.sign({
-            id: user.user_id,
-            role: user.role,
-            student_id: user.student_id,
-            faculty_id: user.faculty_id,
-            username: user.username
-        }, "secretkey", { expiresIn: "2h" });
+    const user = results[0];
+    const storedPassword = user.password;
 
-        res.json({ token, role: user.role, username: user.username });
-    });
+    function sendLoginResponse() {
+      const token = jwt.sign(
+        { 
+          user_id: user.user_id, 
+          role: user.role, 
+          student_id: user.student_id, 
+          faculty_id: user.faculty_id 
+        },
+        JWT_SECRET,
+        { expiresIn: "1h" }
+      );
+      res.json({ 
+        message: "Login successful", 
+        token,   // ✅ return token
+        role: user.role, 
+        userId: user.user_id 
+      });
+    }
+
+    if (storedPassword.startsWith("$2b$")) {
+      bcrypt.compare(password, storedPassword, (err, isMatch) => {
+        if (err) return res.status(500).json({ message: "Error comparing passwords" });
+        if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
+        sendLoginResponse();
+      });
+    } else {
+      if (password !== storedPassword) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+      sendLoginResponse();
+    }
+  });
 });
 
 
@@ -516,24 +544,43 @@ app.get("/faculty/timetable", authenticateFaculty, (req, res) => {
 });
 
 // Add timetable entry (restricted to logged-in faculty)
+// Add timetable entry (restricted to logged-in faculty)
+// Add timetable entry (restricted to logged-in faculty)
 app.post("/faculty/timetable", authenticateFaculty, (req, res) => {
   const facultyId = req.user.faculty_id;
   const { subject_id, day, start_time, end_time } = req.body;
 
-  // Validate subject belongs to faculty
+  // Validate subject belongs to this faculty
   const checkSql = "SELECT * FROM subjects WHERE subject_id = ? AND faculty_id = ?";
   db.query(checkSql, [subject_id, facultyId], (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     if (results.length === 0) return res.status(403).json({ error: "Not authorized for this subject" });
 
-    // Now insert timetable row
-    const sql = `INSERT INTO timetable (subject_id, day, start_time, end_time) VALUES (?, ?, ?, ?)`;
-    db.query(sql, [subject_id, day, start_time, end_time], (err2) => {
+    // Insert timetable row
+    const sql = `
+      INSERT INTO timetable (faculty_id, subject_id, day, start_time, end_time)
+      VALUES (?, ?, ?, ?, ?)
+    `;
+    db.query(sql, [facultyId, subject_id, day, start_time, end_time], (err2, result) => {
       if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ message: "Timetable entry added successfully" });
+
+      const timetableId = result.insertId;
+
+      // Insert into student_timetable for assigned students (ignore duplicates)
+      const studentSql = `
+        INSERT IGNORE INTO student_timetable (student_id, timetable_id)
+        SELECT fs.student_id, ? 
+        FROM faculty_students fs
+        WHERE fs.faculty_id = ?
+      `;
+      db.query(studentSql, [timetableId, facultyId], (err3) => {
+        if (err3) return res.status(500).json({ error: err3.message });
+        res.json({ message: "Timetable entry added successfully for faculty and assigned students" });
+      });
     });
   });
 });
+
 
 // Update timetable entry (only if faculty owns it)
 app.put("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
@@ -557,24 +604,462 @@ app.put("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
 
 
 // Delete timetable entry (only if faculty owns it)
+// Delete timetable entry (faculty only)
 app.delete("/faculty/timetable/:id", authenticateFaculty, (req, res) => {
   const facultyId = req.user.faculty_id;
   const timetableId = req.params.id;
 
-  const sql = `
-    DELETE t FROM timetable t
-    JOIN subjects s ON t.subject_id = s.subject_id
-    WHERE t.timetable_id = ? AND s.faculty_id = ?
-  `;
+  // 1️⃣ Delete related student timetable entries first
+  const deleteStudentSql = `DELETE FROM student_timetable WHERE timetable_id = ?`;
 
-  db.query(sql, [timetableId, facultyId], (err, result) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (result.affectedRows === 0) return res.status(403).json({ error: "Not authorized" });
-    res.json({ message: "Timetable deleted successfully" });
+  db.query(deleteStudentSql, [timetableId], (err1) => {
+    if (err1) return res.status(500).json({ error: err1.message });
+
+    // 2️⃣ Then delete timetable entry (only if owned by faculty)
+    const deleteTimetableSql = `
+      DELETE t FROM timetable t
+      JOIN subjects s ON t.subject_id = s.subject_id
+      WHERE t.timetable_id = ? AND s.faculty_id = ?
+    `;
+
+    db.query(deleteTimetableSql, [timetableId, facultyId], (err2, result) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      if (result.affectedRows === 0) return res.status(403).json({ error: "Not authorized" });
+
+      res.json({ message: "Timetable deleted successfully (faculty + students)" });
+    });
   });
 });
 
 
+// ================= ADMIN ROUTES =================
+
+// Get all users
+app.get("/admin/users", authenticateToken, isAdmin, (req, res) => {
+  db.query("SELECT user_id, username, role FROM users", (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(result);
+  });
+});
+
+// Add new user
+app.post("/admin/addUser", authenticateToken, isAdmin, async (req, res) => {
+  const { username, password, role } = req.body;
+  if (!username || !password || !role) {
+    return res.status(400).json({ error: "All fields required" });
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+  db.query(
+    "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+    [username, hashedPassword, role],
+    (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: "✅ User added successfully" });
+    }
+  );
+});
+
+// Delete user
+app.delete("/admin/users/:id", authenticateToken, isAdmin, (req, res) => {
+  const { id } = req.params;
+  db.query("DELETE FROM users WHERE user_id = ?", [id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: "🗑 User deleted" });
+  });
+});
+
+// ---------------- STUDENTS ----------------
+app.get("/admin/students", authenticateToken, (req, res) => {
+  db.query("SELECT * FROM students", (err, results) => {
+    if (err) return res.status(500).json(err);
+    res.json(results);
+  });
+});
+
+app.post("/admin/students", authenticateToken, (req, res) => {
+  const { name, roll_number, class: studentClass, email, phone } = req.body;
+  db.query(
+    "INSERT INTO students (name, roll_number, class, email, phone) VALUES (?,?,?,?,?)",
+    [name, roll_number, studentClass, email, phone],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      res.json({ message: "Student added", student_id: result.insertId });
+    }
+  );
+});
+
+app.delete("/admin/students/:id", authenticateToken, (req, res) => {
+  db.query(
+    "DELETE FROM students WHERE student_id = ?",
+    [req.params.id],
+    (err) => {
+      if (err) return res.status(500).json(err);
+      res.json({ message: "Student deleted" });
+    }
+  );
+});
+
+// ---------------- FACULTY ----------------
+// Get all faculty with user_id
+app.get("/admin/faculty", authenticateToken, (req, res) => {
+  const sql = `
+    SELECT f.faculty_id, f.name, f.department, u.user_id
+    FROM faculty f
+    LEFT JOIN users u ON u.faculty_id = f.faculty_id
+  `;
+  db.query(sql, (err, results) => {
+    if (err) return res.status(500).json(err);
+    res.json(results);
+  });
+});
+
+
+
+app.post("/admin/faculty", authenticateToken, (req, res) => {
+  const { user_id, name, department } = req.body;
+
+  if (!user_id) {
+    return res.status(400).json({ error: "user_id is required" });
+  }
+
+  // Step 1: Insert into faculty
+  db.query(
+    "INSERT INTO faculty (name, department) VALUES (?, ?)",
+    [name, department],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+
+      const facultyId = result.insertId;
+
+      // Step 2: Update user table with this faculty_id
+      db.query(
+        "UPDATE users SET faculty_id = ? WHERE user_id = ?",
+        [facultyId, user_id],
+        (err2) => {
+          if (err2) return res.status(500).json(err2);
+
+          res.json({
+            message: "Faculty added and linked to user",
+            faculty_id: facultyId,
+            user_id: user_id,
+          });
+        }
+      );
+    }
+  );
+});
+
+
+
+
+
+app.delete("/admin/faculty/:id", authenticateToken, (req, res) => {
+  db.query(
+    "DELETE FROM faculty WHERE faculty_id = ?",
+    [req.params.id],
+    (err) => {
+      if (err) return res.status(500).json(err);
+      res.json({ message: "Faculty deleted" });
+    }
+  );
+});
+
+
+
+// --- SUBJECTS CRUD ---
+
+// ---------------- SUBJECT ASSIGNMENT ----------------
+
+// Get all subjects
+app.get("/admin/subjects", authenticateToken, (req, res) => {
+  db.query("SELECT * FROM subjects", (err, results) => {
+    if (err) return res.status(500).json(err);
+    res.json(results);
+  });
+});
+
+// Unassign subject from faculty
+// Must come BEFORE /assign
+app.put("/admin/subjects/:id/unassign", authenticateToken, (req, res) => {
+  const subjectId = req.params.id;
+
+  db.query(
+    "UPDATE subjects SET faculty_id = NULL WHERE subject_id = ?",
+    [subjectId],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      console.log("Unassign result:", result);   // 👈 Debug
+      res.json({ message: "Subject unassigned successfully", result });
+    }
+  );
+});
+
+app.put("/admin/subjects/:id/assign", authenticateToken, (req, res) => {
+  const subjectId = req.params.id;
+  const { faculty_id } = req.body;
+
+  db.query(
+    "UPDATE subjects SET faculty_id = ? WHERE subject_id = ?",
+    [faculty_id, subjectId],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+      res.json({ message: "Subject assigned successfully", result });
+    }
+  );
+});
+
+
+app.post("/admin/subjects", authenticateToken, (req, res) => {
+  const { name } = req.body;
+
+  if (!name) return res.status(400).json({ error: "Subject name is required" });
+
+  db.query(
+    "INSERT INTO subjects (name) VALUES (?)",
+    [name],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+
+      res.json({
+        message: "Subject added successfully",
+        subject_id: result.insertId,
+        name
+      });
+    }
+  );
+});
+
+// Update subject (only name)
+app.put("/admin/subjects/:id", authenticateToken, (req, res) => {
+  const subjectId = req.params.id;
+  const { name } = req.body;
+
+  if (!name) return res.status(400).json({ error: "New subject name is required" });
+
+  db.query(
+    "UPDATE subjects SET name = ? WHERE subject_id = ?",
+    [name, subjectId],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+
+      res.json({ message: "Subject updated successfully" });
+    }
+  );
+});
+
+// Delete subject
+app.delete("/admin/subjects/:id", authenticateToken, (req, res) => {
+  const subjectId = req.params.id;
+
+  db.query(
+    "DELETE FROM subjects WHERE subject_id = ?",
+    [subjectId],
+    (err, result) => {
+      if (err) return res.status(500).json(err);
+
+      res.json({ message: "Subject deleted successfully" });
+    }
+  );
+});
+
+
+// Delete faculty
+app.delete("/admin/faculty/:id", authenticateToken, (req, res) => {
+  const facultyId = req.params.id;
+
+  // First, unassign all subjects linked to this faculty
+  db.query("UPDATE subjects SET faculty_id = NULL WHERE faculty_id = ?", [facultyId], (err) => {
+    if (err) return res.status(500).json(err);
+
+    // Then delete the faculty
+    db.query("DELETE FROM faculty WHERE faculty_id = ?", [facultyId], (err, result) => {
+      if (err) return res.status(500).json(err);
+      res.json({ message: "Faculty deleted successfully" });
+    });
+  });
+});
+
+
+
+// ---------------- ASSIGNMENTS ----------------
+// ---------------- ADMIN: ASSIGN STUDENTS TO SUBJECTS ----------------
+// ---------------- ADMIN: FACULTY-STUDENT ASSIGNMENTS ----------------
+// ---------------- ADMIN: MANAGE FACULTY-STUDENT ASSIGNMENTS ----------------
+
+// Get assigned students of a faculty
+// Get assigned students of a faculty
+app.get("/admin/faculty/:facultyId/assigned-students", authenticateToken, (req, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  const { facultyId } = req.params;
+  const sql = `
+    SELECT fs.id, s.student_id, s.name, s.roll_number, s.class, s.email, s.phone, fs.assigned_on
+    FROM faculty_students fs
+    JOIN students s ON fs.student_id = s.student_id
+    WHERE fs.faculty_id = ?
+  `;
+  db.query(sql, [facultyId], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(results);
+  });
+});
+
+// Assign student
+app.post("/admin/faculty/:facultyId/assigned-students", authenticateToken, (req, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  const { facultyId } = req.params;
+  const { student_id } = req.body;
+  const sql = "INSERT INTO faculty_students (faculty_id, student_id) VALUES (?, ?)";
+  db.query(sql, [facultyId, student_id], (err, result) => {
+    if (err) {
+      if (err.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "Student already assigned" });
+      return res.status(500).json({ error: err.message });
+    }
+    const assignSql = `
+      INSERT INTO student_timetable (student_id, timetable_id)
+      SELECT ?, t.timetable_id
+      FROM timetable t
+      JOIN subjects sub ON t.subject_id = sub.subject_id
+      WHERE sub.faculty_id = ?
+      ON DUPLICATE KEY UPDATE student_id = student_id
+    `;
+    db.query(assignSql, [student_id, facultyId], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ message: "✅ Student assigned and timetable updated", id: result.insertId });
+    });
+  });
+});
+
+// Unassign student
+app.delete("/admin/faculty/:facultyId/assigned-students/:studentId", authenticateToken, (req, res) => {
+  if (req.user.role !== "admin") return res.status(403).json({ error: "Forbidden" });
+  const { facultyId, studentId } = req.params;
+  const sql = "DELETE FROM faculty_students WHERE faculty_id = ? AND student_id = ?";
+  db.query(sql, [facultyId, studentId], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (result.affectedRows === 0) return res.status(404).json({ error: "Not assigned" });
+    const deleteSql = `
+      DELETE st
+      FROM student_timetable st
+      JOIN timetable t ON st.timetable_id = t.timetable_id
+      JOIN subjects sub ON t.subject_id = sub.subject_id
+      WHERE st.student_id = ? AND sub.faculty_id = ?
+    `;
+    db.query(deleteSql, [studentId, facultyId], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ message: "✅ Student unassigned and timetable updated" });
+    });
+  });
+});
+
+
+
+// ---------------- TIMETABLE ----------------
+// ---------------- GET TIMETABLE BY FACULTY ----------------
+// ---------------- GET TIMETABLE BY FACULTY ----------------
+// ---------------- GET FACULTY TIMETABLE ----------------
+app.get("/admin/timetable/faculty/:facultyId", authenticateToken, (req, res) => {
+  const { facultyId } = req.params;
+
+  const sql = `
+    SELECT 
+      t.timetable_id, 
+      s.subject_id, 
+      s.name AS subject, 
+      t.day, 
+      t.start_time, 
+      t.end_time
+    FROM timetable t
+    JOIN subjects s ON t.subject_id = s.subject_id
+    WHERE s.faculty_id = ?`;
+
+  db.query(sql, [facultyId], (err, results) => {
+    if (err) return res.status(500).json(err);
+    res.json(results);
+  });
+});
+
+
+// ---------------- ADD TIMETABLE (Admin) ----------------
+app.post("/admin/timetable", authenticateToken, (req, res) => {
+  const { faculty_id, subject_id, day, start_time, end_time } = req.body;
+
+  const sql = `
+    INSERT INTO timetable (faculty_id, subject_id, day, start_time, end_time)
+    VALUES (?, ?, ?, ?, ?)`;
+
+  db.query(sql, [faculty_id, subject_id, day, start_time, end_time], (err, result) => {
+    if (err) return res.status(500).json(err);
+
+    const timetableId = result.insertId;
+
+    // 🔑 Insert timetable for all assigned students
+    const studentSql = `
+      INSERT INTO student_timetable (student_id, timetable_id)
+      SELECT fs.student_id, ?
+      FROM faculty_students fs
+      WHERE fs.faculty_id = ?`;
+
+    db.query(studentSql, [timetableId, faculty_id], (err2) => {
+      if (err2) return res.status(500).json(err2);
+      res.json({ message: "Timetable added (faculty + students)", id: timetableId });
+    });
+  });
+});
+
+
+// ---------------- UPDATE TIMETABLE (Admin) ----------------
+app.put("/admin/timetable/:id", authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const { subject_id, day, start_time, end_time } = req.body;
+
+  const sql = `
+    UPDATE timetable
+    SET subject_id = ?, day = ?, start_time = ?, end_time = ?
+    WHERE timetable_id = ?`;
+
+  db.query(sql, [subject_id, day, start_time, end_time, id], (err, result) => {
+    if (err) return res.status(500).json(err);
+    if (result.affectedRows === 0) return res.status(404).json({ error: "Timetable not found" });
+
+    res.json({ message: "Timetable updated (faculty + students)" });
+  });
+});
+
+
+// ---------------- DELETE TIMETABLE (Admin) ----------------
+app.delete("/admin/timetable/:id", authenticateToken, (req, res) => {
+  const { id } = req.params;
+
+  // 1️⃣ Delete from student_timetable first
+  const deleteStudentSql = `DELETE FROM student_timetable WHERE timetable_id = ?`;
+
+  db.query(deleteStudentSql, [id], (err1) => {
+    if (err1) return res.status(500).json(err1);
+
+    // 2️⃣ Delete timetable entry
+    const deleteSql = `DELETE FROM timetable WHERE timetable_id = ?`;
+
+    db.query(deleteSql, [id], (err2, result) => {
+      if (err2) return res.status(500).json(err2);
+      if (result.affectedRows === 0) return res.status(404).json({ error: "Timetable not found" });
+
+      res.json({ message: "Timetable deleted (faculty + students)" });
+    });
+  });
+});
+
+
+
+// ---------------- GET SUBJECTS BY FACULTY ----------------
+// get subjects for faculty
+app.get("/admin/subjects/faculty/:facultyId", authenticateToken, (req, res) => {
+  const { facultyId } = req.params;
+  db.query("SELECT * FROM subjects WHERE faculty_id = ?", [facultyId], (err, result) => {
+    if (err) return res.status(500).json(err);
+    res.json(result);
+  });
+});
 
 
 // ---------------- FULL PIPELINE ----------------
