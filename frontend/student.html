@@ -47,35 +47,54 @@
       </div>
     </div>
 
+    
     <!-- Attendance Table -->
-    <!-- Attendance Table -->
-    <div class="card shadow p-3 mb-4">
-        <h4 class="mb-3">✅ My Attendance</h4>
-        <table class="table table-bordered">
-          <thead class="table-dark">
-        <tr>
+    <!-- Navigation Buttons -->
+<div class="d-flex justify-content-center mb-4">
+  <button class="btn btn-primary mx-2" onclick="showSection('attendance')">✅ My Attendance</button>
+  <button class="btn btn-info mx-2" onclick="showSection('timetable')">📅 My Timetable</button>
+</div>
+
+<!-- Attendance Table -->
+<div id="attendance" class="section card shadow p-3 mb-4" style="display:none;">
+  <h4 class="mb-3">✅ My Attendance</h4>
+  <table class="table table-bordered">
+    <thead class="table-dark">
+      <tr>
         <th>Attendance ID</th>
         <th>Student ID</th>
         <th>Name</th>
         <th>Subject</th>
         <th>Timestamp</th>
-        </tr>
-        </thead>
+      </tr>
+    </thead>
     <tbody id="attendanceTable"></tbody>
-    </table>
-    </div>
+  </table>
+</div>
 
+<!-- Timetable Table -->
+<div id="timetable" class="section card shadow p-3 mb-4" style="display:none;">
+  <h4 class="mb-3">📅 My Timetable</h4>
+  <table class="table table-striped">
+    <thead class="table-primary">
+      <tr><th>Day</th><th>Subject</th><th>Start</th><th>End</th></tr>
+    </thead>
+    <tbody id="timetableTable"></tbody>
+  </table>
+</div>
 
-    <!-- Timetable Table -->
-    <div class="card shadow p-3 mb-4">
-      <h4 class="mb-3">📅 My Timetable</h4>
-      <table class="table table-striped">
-        <thead class="table-primary">
-          <tr><th>Day</th><th>Subject</th><th>Start</th><th>End</th></tr>
-        </thead>
-        <tbody id="timetableTable"></tbody>
-      </table>
-    </div>
+<script>
+function showSection(sectionId) {
+  // Hide all sections
+  document.querySelectorAll(".section").forEach(sec => sec.style.display = "none");
+  // Show selected section
+  document.getElementById(sectionId).style.display = "block";
+
+  // Call fetch functions if needed
+  if (sectionId === "attendance") fetchMyAttendance();
+  if (sectionId === "timetable") fetchTimetable();
+}
+</script>
 
     <!-- Face Recognition -->
     <div class="text-center mb-4">
