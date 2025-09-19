@@ -40,9 +40,11 @@
         localStorage.setItem("role", data.role);
         localStorage.setItem("username", username);
 
-        // Redirect
+        // Redirect based on role
         if (data.role === "faculty") {
           window.location.href = "faculty.html";
+        } else if (data.role === "admin") {
+          window.location.href = "admin.html";
         } else {
           window.location.href = "student.html";
         }
