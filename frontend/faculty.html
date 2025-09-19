@@ -4,67 +4,91 @@
 <meta charset="UTF-8">
 <title>Faculty Dashboard</title>
 <style>
-body { font-family: Arial, sans-serif; background: #f3f3f3; padding: 30px; text-align: center; }
-button { padding: 8px 12px; margin: 4px; cursor: pointer; }
-table { margin: 20px auto; border-collapse: collapse; width: 95%; background: #fff; }
-th, td { border: 1px solid #ccc; padding: 8px; }
-th { background: #007bff; color: #fff; }
+  body { font-family: Arial, sans-serif; background: #f3f3f3; margin: 0; }
+  header { background: #007bff; padding: 15px; color: #fff; text-align: center; }
+  nav { background: #f1f1f1; padding: 10px; text-align: center; }
+  nav button { padding: 10px 15px; margin: 5px; cursor: pointer; border: none; background: #007bff; color: white; border-radius: 5px; }
+  nav button:hover { background: #0056b3; }
+  section { display: none; padding: 20px; }
+  table { margin: 20px auto; border-collapse: collapse; width: 95%; background: #fff; }
+  th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+  th { background: #007bff; color: #fff; }
+  h2 { margin-top: 0; }
+  .active { display: block; }
 </style>
 </head>
 <body>
-<h1>👨‍🏫 Faculty Dashboard</h1>
-<button onclick="logout()">Logout</button>
 
-<h2>📋 Students List</h2>
-<button onclick="addStudent()">➕ Add Student</button>
-<table id="studentsTable">
-<thead>
-<tr>
-<th>ID</th><th>Name</th><th>Roll</th><th>Class</th><th>Email</th><th>Phone</th><th>Actions</th>
-</tr>
-</thead>
-<tbody></tbody>
-</table>
+<header>
+  <h1>👨‍🏫 Faculty Dashboard</h1>
+  <button onclick="logout()">Logout</button>
+</header>
 
-<h2>👨‍🏫 Assigned Students</h2>
-<button onclick="assignStudent()">➕ Assign Student</button>
-<table id="assignedTable">
-  <thead>
-    <tr>
-      <th>ID</th><th>Student ID</th><th>Name</th><th>Roll</th><th>Class</th><th>Email</th><th>Phone</th><th>Assigned On</th><th>Actions</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
+<nav>
+  <button onclick="showSection('students')">🎓 Students</button>
+  <button onclick="showSection('assigned')">👨‍🏫 Assigned Students</button>
+  <button onclick="showSection('attendance')">🗂 Attendance</button>
+  <button onclick="showSection('timetable')">📅 Timetable</button>
+</nav>
+
+<!-- Students Section -->
+<section id="students">
+  <h2>📋 Students List</h2>
+  <button onclick="addStudent()">➕ Add Student</button>
+  <table id="studentsTable">
+    <thead>
+      <tr><th>ID</th><th>Name</th><th>Roll</th><th>Class</th><th>Email</th><th>Phone</th><th>Actions</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<!-- Assigned Students Section -->
+<section id="assigned">
+  <h2>👨‍🏫 Assigned Students</h2>
+  <button onclick="assignStudent()">➕ Assign Student</button>
+  <table id="assignedTable">
+    <thead>
+      <tr><th>ID</th><th>Student ID</th><th>Name</th><th>Roll</th><th>Class</th><th>Email</th><th>Phone</th><th>Assigned On</th><th>Actions</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<!-- Attendance Section -->
+<section id="attendance">
+  <h2>🗂 Attendance Records</h2>
+  <button onclick="addAttendance()">➕ Add Attendance</button>
+  <table id="attendanceTable">
+    <thead>
+      <tr><th>ID</th><th>Student ID</th><th>Name</th><th>Subject ID</th><th>Subject</th><th>Timestamp</th><th>Actions</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<!-- Timetable Section -->
+<section id="timetable">
+  <h2>📅 Timetable Management</h2>
+  <button onclick="addTimetable()">➕ Add Timetable</button>
+  <table id="timetableTable">
+    <thead>
+      <tr><th>ID</th><th>Subject</th><th>Day</th><th>Start Time</th><th>End Time</th><th>Actions</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</section>
 
 
-<h2>🗂 Attendance Records</h2>
-<button onclick="addAttendance()">➕ Add Attendance</button>
-<table id="attendanceTable">
-<thead>
-<tr>
-<th>ID</th><th>Student ID</th><th>Name</th><th>Subject ID</th><th>Subject</th><th>Timestamp</th><th>Actions</th>
-</tr>
-</thead>
-<tbody></tbody>
-</table>
+<script>
+  function showSection(sectionId) {
+    document.querySelectorAll("section").forEach(sec => sec.classList.remove("active"));
+    document.getElementById(sectionId).classList.add("active");
+  }
 
-<h2>📅 Timetable Management</h2>
-<button onclick="addTimetable()">➕ Add Timetable</button>
-<table id="timetableTable">
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>Subject</th>
-      <th>Day</th>
-      <th>Start Time</th>
-      <th>End Time</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
-
+  // Default open Students tab
+  showSection('students');
+</script>
 
 <script>
 const token = localStorage.getItem("token");
