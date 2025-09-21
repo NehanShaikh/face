@@ -4,17 +4,68 @@
 <meta charset="UTF-8">
 <title>Faculty Dashboard</title>
 <style>
-  body { font-family: Arial, sans-serif; background: #f3f3f3; margin: 0; }
-  header { background: #007bff; padding: 15px; color: #fff; text-align: center; }
-  nav { background: #f1f1f1; padding: 10px; text-align: center; }
-  nav button { padding: 10px 15px; margin: 5px; cursor: pointer; border: none; background: #007bff; color: white; border-radius: 5px; }
+  body { 
+    font-family: Arial, sans-serif; 
+    background: #f3f3f3; 
+    margin: 0; 
+  }
+  header { 
+    background: #007bff; 
+    padding: 15px; 
+    color: #fff; 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header button {
+    background: #ff4d4d; 
+    border: none; 
+    color: white; 
+    padding: 8px 14px; 
+    border-radius: 6px; 
+    cursor: pointer;
+  }
+  header button:hover { background: #cc0000; }
+
+  nav { background: #e9ecef; padding: 12px; text-align: center; }
+  nav button { 
+    padding: 10px 18px; 
+    margin: 5px; 
+    cursor: pointer; 
+    border: none; 
+    background: #007bff; 
+    color: white; 
+    border-radius: 5px; 
+    font-weight: bold;
+    transition: 0.2s;
+  }
   nav button:hover { background: #0056b3; }
+
   section { display: none; padding: 20px; }
-  table { margin: 20px auto; border-collapse: collapse; width: 95%; background: #fff; }
+  section.active { display: block; }
+
+  .card {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+  }
+
+  .table-container { overflow-x: auto; }
+  table { 
+    margin-top: 15px; 
+    border-collapse: collapse; 
+    width: 100%; 
+    background: #fff; 
+  }
   th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
   th { background: #007bff; color: #fff; }
-  h2 { margin-top: 0; }
-  .active { display: block; }
+  tr:hover td { background: #f9f9f9; }
+
+  h2 { margin-top: 0; color: #333; }
+  .action-btn { cursor: pointer; border: none; background: none; font-size: 16px; }
 </style>
 </head>
 <body>
