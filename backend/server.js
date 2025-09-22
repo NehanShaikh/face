@@ -135,71 +135,98 @@ app.post("/login", (req, res) => {
 // ================== Attendance Routes ==================
 
 // Student marks their attendance (with subject check)
-app.post('/attendance', async (req, res) => {
-    try {
-        const { name } = req.body;
+require('dotenv').config();
+const sendMail = require("./mailer");
 
-        // 1. Find student_id
-        const [studentRows] = await db.promise().query(
-            "SELECT student_id FROM students WHERE name = ?",
-            [name]
-        );
+app.post("/attendance", async (req, res) => {
+  try {
+    const { name } = req.body;
 
-        if (studentRows.length === 0) {
-            console.warn("⚠️ Student not found:", name);
-            return res.status(404).send("Student not found");
-        }
+    // 1. Find student info
+    const [studentRows] = await db.promise().query(
+      "SELECT student_id, name, email FROM students WHERE name = ?",
+      [name]
+    );
 
-        const studentId = studentRows[0].student_id;
-
-        // 2. Find current subject from timetable where student is enrolled
-        const [rows] = await db.promise().query(
-            `SELECT s.subject_id, s.name AS subject_name
-             FROM timetable t
-             JOIN subjects s ON t.subject_id = s.subject_id
-             JOIN student_timetable st ON st.timetable_id = t.timetable_id
-             WHERE st.student_id = ?
-             AND LOWER(t.day) IN (LOWER(DAYNAME(NOW())), LOWER(DATE_FORMAT(NOW(), '%a')))
-             AND TIME(NOW()) BETWEEN t.start_time AND ADDTIME(t.end_time, '00:05:00')
-             LIMIT 1`,
-            [studentId]
-        );
-
-        if (rows.length === 0) {
-            console.warn("⚠️ No subject found for current time or student not enrolled");
-            return res.status(404).send("No subject at this time or not enrolled");
-        }
-
-        const subjectId = rows[0].subject_id;
-        const subjectName = rows[0].subject_name;
-
-        // 3. Prevent duplicate marking
-        const [check] = await db.promise().query(
-            `SELECT * FROM attendance
-             WHERE student_id = ? 
-             AND subject_id = ?
-             AND DATE(timestamp) = CURDATE()`,
-            [studentId, subjectId]
-        );
-
-        if (check.length > 0) {
-            console.log(`⚠️ Attendance already marked for ${name} in ${subjectName}`);
-            return res.status(400).send("Attendance already marked for this subject today");
-        }
-
-        // 4. Insert attendance
-        await db.promise().query(
-            "INSERT INTO attendance (student_id, subject_id, subject_name) VALUES (?, ?, ?)",
-            [studentId, subjectId, subjectName]
-        );
-
-        console.log(`✅ Attendance marked for ${name} (ID: ${studentId}, Subject: ${subjectName})`);
-        res.send({ status: "success", student_id: studentId, subject: subjectName });
-
-    } catch (err) {
-        console.error("❌ Error in attendance route:", err);
-        res.status(500).send("Internal Server Error");
+    if (studentRows.length === 0) {
+      console.warn("⚠️ Student not found:", name);
+      return res.status(404).send("Student not found");
     }
+
+    const studentId = studentRows[0].student_id;
+    const studentName = studentRows[0].name;
+    const studentEmail = studentRows[0].email;
+
+    // 2. Find subject from timetable
+    const [rows] = await db.promise().query(
+      `SELECT s.subject_id, s.name AS subject_name
+       FROM timetable t
+       JOIN subjects s ON t.subject_id = s.subject_id
+       JOIN student_timetable st ON st.timetable_id = t.timetable_id
+       WHERE st.student_id = ?
+       AND LOWER(t.day) IN (LOWER(DAYNAME(NOW())), LOWER(DATE_FORMAT(NOW(), '%a')))
+       AND TIME(NOW()) BETWEEN t.start_time AND ADDTIME(t.end_time, '00:05:00')
+       LIMIT 1`,
+      [studentId]
+    );
+
+    if (rows.length === 0) {
+      console.warn("⚠️ No subject found for current time or student not enrolled");
+      return res.status(404).send("No subject at this time or not enrolled");
+    }
+
+    const subjectId = rows[0].subject_id;
+    const subjectName = rows[0].subject_name;
+
+    // 3. Prevent duplicate marking
+    const [check] = await db.promise().query(
+      `SELECT * FROM attendance
+       WHERE student_id = ? 
+       AND subject_id = ?
+       AND DATE(timestamp) = CURDATE()`,
+      [studentId, subjectId]
+    );
+
+    if (check.length > 0) {
+      console.log(`⚠️ Attendance already marked for ${studentName} in ${subjectName}`);
+      return res.status(400).send("Attendance already marked for this subject today");
+    }
+
+    // 4. Insert attendance
+    await db.promise().query(
+      "INSERT INTO attendance (student_id, subject_id, subject_name) VALUES (?, ?, ?)",
+      [studentId, subjectId, subjectName]
+    );
+
+    const timestamp = new Date().toLocaleString();
+    console.log(`✅ Attendance marked for ${studentName} (ID: ${studentId}, Subject: ${subjectName})`);
+
+    // 5. Send email only if student has email
+    if (!studentEmail) {
+      console.warn(`⚠️ No email for student ${studentName} (ID ${studentId}) — skipping mail.`);
+    } else {
+      await sendMail(
+        studentEmail,
+        "📅 Attendance Marked",
+        `Your attendance for ${subjectName} has been marked.`,
+        `<h3>Hello ${studentName},</h3>
+         <p>Your attendance has been marked successfully.</p>
+         <p><b>Subject:</b> ${subjectName}<br>
+            <b>Time:</b> ${timestamp}</p>`
+      );
+    }
+
+    res.send({
+      status: "success",
+      student_id: studentId,
+      subject: subjectName,
+      timestamp,
+    });
+
+  } catch (err) {
+    console.error("❌ Error in attendance route:", err);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 
@@ -270,15 +297,47 @@ app.get('/faculty/students', authenticateToken, (req, res) => {
 });
 
 // Add student
-app.post('/faculty/students', authenticateToken, (req, res) => {
-    if (req.user.role !== 'faculty') return res.status(403).json({ error: "Forbidden" });
+app.post("/faculty/students", authenticateToken, (req, res) => {
+  if (req.user.role !== "faculty")
+    return res.status(403).json({ error: "Forbidden" });
 
-    const { name, roll_number, class_name, email, phone } = req.body;
-    const sql = "INSERT INTO students (name, roll_number, class, email, phone) VALUES (?, ?, ?, ?, ?)";
-    db.query(sql, [name, roll_number, class_name, email, phone], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: "Student added", student_id: result.insertId });
+  const { name, roll_number, class_name, email, phone } = req.body;
+
+  const sql =
+    "INSERT INTO students (name, roll_number, class, email, phone) VALUES (?, ?, ?, ?, ?)";
+  db.query(sql, [name, roll_number, class_name, email, phone], async (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    const newStudentId = result.insertId;
+
+    // ✅ Send welcome email
+    try {
+      await sendMail(
+        email,
+        "🎓 Student Registration - Smart Attendance System",
+        `Hello ${name},\n\nYou have been successfully registered by your faculty in the Smart Attendance System.\n\nDetails:\n- Roll Number: ${roll_number}\n- Class: ${class_name}\n- Student ID: ${newStudentId}\n\nYou can now use your account to mark attendance.\n\nBest Regards,\nFaculty Team`,
+        `<h2>Welcome, ${name}! 🎓</h2>
+         <p>Your faculty has registered you in the <b>Smart Attendance System</b>.</p>
+         <p>
+           <b>Roll Number:</b> ${roll_number}<br>
+           <b>Class:</b> ${class_name}<br>
+           <b>Student ID:</b> ${newStudentId}
+         </p>
+         <p>You can now use your account to mark attendance.</p>
+         <br>
+         <p>Best Regards,<br><b>Faculty Team</b></p>`
+      );
+
+      console.log(`📧 Registration email sent to ${email}`);
+    } catch (mailErr) {
+      console.error("❌ Failed to send registration email:", mailErr.message);
+    }
+
+    res.json({
+      message: "Student added & email sent",
+      student_id: newStudentId,
     });
+  });
 });
 
 // Update student
@@ -387,6 +446,32 @@ app.delete("/faculty/assigned-students/:studentId", authenticateToken, (req, res
 });
 
 
+// 📌 Faculty: Fetch all attendance records with student + subject info
+app.get("/faculty/attendance", authenticateToken, async (req, res) => {
+  if (req.user.role !== "faculty") 
+    return res.status(403).json({ error: "Access denied: Not a faculty" });
+
+  const facultyId = req.user.faculty_id;
+
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT a.attendance_id, a.timestamp, 
+              s.student_id, s.name AS student_name,
+              sub.subject_id, sub.name AS subject_name
+       FROM attendance a
+       JOIN students s ON a.student_id = s.student_id
+       JOIN subjects sub ON a.subject_id = sub.subject_id
+       WHERE sub.faculty_id = ?
+       ORDER BY a.timestamp DESC`,
+      [facultyId]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error fetching attendance:", err);
+    res.status(500).json({ error: "Failed to fetch attendance" });
+  }
+});
 
 // Add attendance
 app.post("/faculty/attendance", authenticateToken, (req, res) => {
@@ -442,21 +527,46 @@ app.delete("/faculty/attendance/:id", authenticateToken, (req, res) => {
 
 // Student self-registration
 app.post("/students", authenticateToken, (req, res) => {
-    if (req.user.role !== "student") {
-        return res.status(403).json({ error: "Only students can self-register" });
+  if (req.user.role !== "student") {
+    return res.status(403).json({ error: "Only students can self-register" });
+  }
+
+  const { name, roll_number, class_name, email, phone } = req.body;
+
+  const sql = `INSERT INTO students (name, roll_number, class, email, phone) VALUES (?, ?, ?, ?, ?)`;
+  db.query(sql, [name, roll_number, class_name, email, phone], async (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    const newStudentId = result.insertId;
+
+    // ✅ Send welcome email
+    try {
+      await sendMail(
+        email,
+        "🎓 Welcome to Smart Attendance System",
+        `Hello ${name},\n\nYou have successfully registered in the Smart Attendance System.\n\nDetails:\n- Roll Number: ${roll_number}\n- Class: ${class_name}\n- Student ID: ${newStudentId}\n\nYou can now log in and start marking your attendance.\n\nBest Regards,\nAdmin Team`,
+        `<h2>Welcome, ${name}! 🎓</h2>
+         <p>You have successfully registered in the <b>Smart Attendance System</b>.</p>
+         <p>
+           <b>Roll Number:</b> ${roll_number}<br>
+           <b>Class:</b> ${class_name}<br>
+           <b>Student ID:</b> ${newStudentId}
+         </p>
+         <p>You can now log in and start marking your attendance.</p>
+         <br>
+         <p>Best Regards,<br><b>Admin Team</b></p>`
+      );
+
+      console.log(`📧 Registration email sent to ${email}`);
+    } catch (mailErr) {
+      console.error("❌ Failed to send registration email:", mailErr.message);
     }
 
-    const { name, roll_number, class_name, email, phone } = req.body;
-
-    const sql = `INSERT INTO students (name, roll_number, class, email, phone) VALUES (?, ?, ?, ?, ?)`;
-    db.query(sql, [name, roll_number, class_name, email, phone], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        res.json({
-            message: "✅ Student registered successfully!",
-            student_id: result.insertId
-        });
+    res.json({
+      message: "✅ Student registered successfully & email sent!",
+      student_id: newStudentId,
     });
+  });
 });
 
 // Create user login first (no student_id yet)
@@ -472,34 +582,46 @@ app.post("/register-user", (req, res) => {
 
 // Register Student
 app.post("/api/students", (req, res) => {
-    const { name, roll_number, class_name, email, phone, username } = req.body;
+  const { name, roll_number, class_name, email, phone, username } = req.body;
 
-    // Insert into students table
-    const studentSql = `
+  // Insert into students table
+  const studentSql = `
         INSERT INTO students (name, roll_number, class, email, phone, registered_on)
         VALUES (?, ?, ?, ?, ?, NOW())
     `;
-    db.query(studentSql, [name, roll_number, class_name, email, phone], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
+  db.query(studentSql, [name, roll_number, class_name, email, phone], (err, result) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-        const newStudentId = result.insertId; // <-- newly generated student_id
+    const newStudentId = result.insertId; // <-- newly generated student_id
 
-        // Update users table (where student_id is NULL and username matches)
-        const updateUserSql = `
+    // Update users table (where student_id is NULL and username matches)
+    const updateUserSql = `
             UPDATE users
             SET student_id = ?
             WHERE username = ? AND student_id IS NULL
         `;
-        db.query(updateUserSql, [newStudentId, username], (err2) => {
-            if (err2) return res.status(500).json({ error: err2.message });
+    db.query(updateUserSql, [newStudentId, username], async (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
 
-            res.json({ 
-                success: true, 
-                message: "Student registered and linked to user successfully!",
-                student_id: newStudentId
-            });
+      // ✅ Send registration email
+      try {
+        await sendMail({
+          to: email,
+          subject: "🎉 Registration Successful - Smart Attendance System",
+          text: `Hello ${name},\n\nYou have been successfully registered in the Smart Attendance System.\n\nDetails:\n- Roll Number: ${roll_number}\n- Class: ${class_name}\n- Student ID: ${newStudentId}\n\nYou can now log in using your username: ${username}.\n\nBest Regards,\nAdmin Team`,
         });
+        console.log(`📧 Registration email sent to ${email}`);
+      } catch (mailErr) {
+        console.error("❌ Failed to send registration email:", mailErr.message);
+      }
+
+      res.json({
+        success: true,
+        message: "Student registered, linked to user, and email sent successfully!",
+        student_id: newStudentId,
+      });
     });
+  });
 });
 
 // ✅ Student Timetable Route
@@ -679,12 +801,39 @@ app.get("/admin/students", authenticateToken, (req, res) => {
 
 app.post("/admin/students", authenticateToken, (req, res) => {
   const { name, roll_number, class: studentClass, email, phone } = req.body;
+
   db.query(
     "INSERT INTO students (name, roll_number, class, email, phone) VALUES (?,?,?,?,?)",
     [name, roll_number, studentClass, email, phone],
-    (err, result) => {
+    async (err, result) => {
       if (err) return res.status(500).json(err);
-      res.json({ message: "Student added", student_id: result.insertId });
+
+      const newStudentId = result.insertId;
+
+      // ✅ Send welcome email
+      try {
+        await sendMail(
+          email,
+          "🎉 Registration Successful - Smart Attendance System",
+          `Hello ${name},\n\nYou have been successfully registered in the Smart Attendance System.\n\nDetails:\n- Roll Number: ${roll_number}\n- Class: ${studentClass}\n- Student ID: ${newStudentId}\n\nYou can now use your account to mark attendance.\n\nBest Regards,\nAdmin Team`,
+          `<h2>Welcome, ${name}! 🎉</h2>
+           <p>You have been successfully registered in the <b>Smart Attendance System</b>.</p>
+           <p>
+             <b>Roll Number:</b> ${roll_number}<br>
+             <b>Class:</b> ${studentClass}<br>
+             <b>Student ID:</b> ${newStudentId}
+           </p>
+           <p>You can now use your account to mark attendance.</p>
+           <br>
+           <p>Best Regards,<br><b>Admin Team</b></p>`
+        );
+
+        console.log(`📧 Registration email sent to ${email}`);
+      } catch (mailErr) {
+        console.error("❌ Failed to send registration email:", mailErr.message);
+      }
+
+      res.json({ message: "Student added & email sent", student_id: newStudentId });
     }
   );
 });
