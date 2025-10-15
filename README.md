@@ -1,5 +1,5 @@
 ```markdown
-# 🎥 AI-Powered Smart Attendance and Behavior Monitoring System using CCTV Camera
+# 🎥 AI-Powered Smart Attendance System using CCTV Camera
 
 An advanced **AI + Computer Vision-based Attendance Management System** that automates student attendance and behavioral analysis using live CCTV footage.  
 It uses **Face Recognition (MTCNN + FaceNet)**, a secure **web dashboard**, and **MySQL + Node.js backend** for real-time processing and monitoring.
